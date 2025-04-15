@@ -1,0 +1,45 @@
+# Ignore Jupyter checkpoints
+.ipynb_checkpoints/
+
+# Python cache and compiled files
+__pycache__/
+*.py[cod]
+*.so
+
+# Ignore specific files from machine  (.insightface/ is here also)
+.bash_history
+.bashrc
+.cache/
+.cargo/
+.conda/
+.gitconfig
+.ipython/
+.insightface/
+.jupyter/
+.local/
+.profile
+.python_history
+.rustup/
+.sudo_as_admin_successful
+.triton/
+.wget-hsts
+
+# Data files
+*.npz
+*.zip
+*.tar.gz
+*.rar
+*.onnx
+
+# Large output folders
+ARCFACE/celebahq-idi
+diffusers
+ARCFACE/models
+
+# But keep the controlnet folder
+!diffusers/examples/controlnet
+
+# Ignore trained controlnet
+diffusers/examples/controlnet/trained_controlnet
+diffusers/examples/controlnet/trained_controlnet_2
+diffusers/examples/controlnet/trained_controlnet_inicial

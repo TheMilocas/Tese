@@ -33,11 +33,9 @@ __pycache__/
 
 # Large output folders
 ARCFACE/celebahq-idi
-diffusers
 ARCFACE/models
 
 # But keep the controlnet folder
-!diffusers/examples/controlnet
 
 # Ignore trained controlnet
 diffusers/examples/controlnet/trained_controlnet

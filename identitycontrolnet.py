@@ -466,6 +466,12 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
             unet.config.addition_time_embed_dim if "addition_time_embed_dim" in unet.config else None
         )
 
+        target_shape = (
+        unet.config.block_out_channels[-1],  # channels
+        unet.config.sample_size // (2 ** (len(unet.config.block_out_channels) - 1)),  # height
+        unet.config.sample_size // (2 ** (len(unet.config.block_out_channels) - 1))   # width
+        )
+        
         controlnet = cls(
             encoder_hid_dim=encoder_hid_dim,
             encoder_hid_dim_type=encoder_hid_dim_type,
@@ -510,7 +516,7 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
             if hasattr(controlnet, "add_embedding"):
                 controlnet.add_embedding.load_state_dict(unet.add_embedding.state_dict())
 
-            controlnet.down_blocks.load_state_dict(unet.down_blocks.state_dict())
+            controlnet.up_blocks.load_state_dict(unet.up_blocks.state_dict())
             controlnet.mid_block.load_state_dict(unet.mid_block.state_dict())
 
         return controlnet
@@ -712,16 +718,16 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
                 If `return_dict` is `True`, a [`~models.controlnets.controlnet.ControlNetOutput`] is returned,
                 otherwise a tuple is returned where the first element is the sample tensor.
         """
-        # check channel order
-        channel_order = self.config.controlnet_conditioning_channel_order
+        # # check channel order
+        # channel_order = self.config.controlnet_conditioning_channel_order
 
-        if channel_order == "rgb":
-            # in rgb order by default
-            ...
-        elif channel_order == "bgr":
-            controlnet_cond = torch.flip(controlnet_cond, dims=[1])
-        else:
-            raise ValueError(f"unknown `controlnet_conditioning_channel_order`: {channel_order}")
+        # if channel_order == "rgb":
+        #     # in rgb order by default
+        #     ...
+        # elif channel_order == "bgr":
+        #     controlnet_cond = torch.flip(controlnet_cond, dims=[1])
+        # else:
+        #     raise ValueError(f"unknown `controlnet_conditioning_channel_order`: {channel_order}")
 
         # prepare attention_mask
         if attention_mask is not None:
@@ -793,26 +799,12 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
         # 2. pre-process
         sample = self.conv_in(sample)
 
-        controlnet_cond = self.controlnet_cond_embedding(controlnet_cond)
+        controlnet_cond = self.controlnet_cond_embedding(controlnet_cond) # (b, 512) -> (b, c, h, w)
         sample = sample + controlnet_cond
 
-        # 3. down
-        down_block_res_samples = (sample,)
-        for downsample_block in self.down_blocks:
-            if hasattr(downsample_block, "has_cross_attention") and downsample_block.has_cross_attention:
-                sample, res_samples = downsample_block(
-                    hidden_states=sample,
-                    temb=emb,
-                    encoder_hidden_states=encoder_hidden_states,
-                    attention_mask=attention_mask,
-                    cross_attention_kwargs=cross_attention_kwargs,
-                )
-            else:
-                sample, res_samples = downsample_block(hidden_states=sample, temb=emb)
+        # 3. mid
+        up_block_res_samples = []
 
-            down_block_res_samples += res_samples
-
-        # 4. mid
         if self.mid_block is not None:
             if hasattr(self.mid_block, "has_cross_attention") and self.mid_block.has_cross_attention:
                 sample = self.mid_block(
@@ -825,40 +817,55 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
             else:
                 sample = self.mid_block(sample, emb)
 
+        mid_block_res_sample = self.controlnet_mid_block(sample)
+        
+        for up_block in self.up_blocks:
+            if hasattr(up_block, "has_cross_attention") and up_block.has_cross_attention:
+                sample, res_samples = up_block(
+                    hidden_states=sample,
+                    temb=emb,
+                    encoder_hidden_states=encoder_hidden_states,
+                    attention_mask=attention_mask,
+                    cross_attention_kwargs=cross_attention_kwargs,
+                )
+            else:
+                sample, res_samples = up_block(hidden_states=sample, temb=emb)
+
+            sample = up_block(sample, emb)
+
         # 5. Control net blocks
 
-        controlnet_down_block_res_samples = ()
+        controlnet_up_block_res_samples = ()
 
-        for down_block_res_sample, controlnet_block in zip(down_block_res_samples, self.controlnet_down_blocks):
-            down_block_res_sample = controlnet_block(down_block_res_sample)
-            controlnet_down_block_res_samples = controlnet_down_block_res_samples + (down_block_res_sample,)
+        for up_block_res_sample, controlnet_block in zip(up_block_res_samples, self.controlnet_up_blocks):
+            up_block_res_sample = controlnet_block(up_block_res_sample)
+            controlnet_up_block_res_samples = controlnet_up_block_res_samples + (up_block_res_sample,)
 
-        down_block_res_samples = controlnet_down_block_res_samples
-
-        mid_block_res_sample = self.controlnet_mid_block(sample)
+        up_block_res_samples = controlnet_up_block_res_samples
 
         # 6. scaling
         if guess_mode and not self.config.global_pool_conditions:
-            scales = torch.logspace(-1, 0, len(down_block_res_samples) + 1, device=sample.device)  # 0.1 to 1.0
+            scales = torch.logspace(-1, 0, len(up_block_res_samples) + 1, device=sample.device)  # 0.1 to 1.0
             scales = scales * conditioning_scale
-            down_block_res_samples = [sample * scale for sample, scale in zip(down_block_res_samples, scales)]
+            down_block_res_samples = [sample * scale for sample, scale in zip(up_block_res_samples, scales)]
             mid_block_res_sample = mid_block_res_sample * scales[-1]  # last one
         else:
-            down_block_res_samples = [sample * conditioning_scale for sample in down_block_res_samples]
+            up_block_res_samples = [sample * conditioning_scale for sample in up_block_res_samples]
             mid_block_res_sample = mid_block_res_sample * conditioning_scale
 
         if self.config.global_pool_conditions:
-            down_block_res_samples = [
-                torch.mean(sample, dim=(2, 3), keepdim=True) for sample in down_block_res_samples
+            up_block_res_samples = [
+                torch.mean(sample, dim=(2, 3), keepdim=True) for sample in up_block_res_samples
             ]
             mid_block_res_sample = torch.mean(mid_block_res_sample, dim=(2, 3), keepdim=True)
 
         if not return_dict:
-            return (down_block_res_samples, mid_block_res_sample)
+            return (up_block_res_samples, mid_block_res_sample)
 
         return ControlNetOutput(
-            down_block_res_samples=down_block_res_samples, mid_block_res_sample=mid_block_res_sample
-        )
+        down_block_res_samples=up_block_res_samples[::-1],  # Reverse to match original order
+        mid_block_res_sample=mid_block_res_sample
+    )
 
 
 def zero_module(module):

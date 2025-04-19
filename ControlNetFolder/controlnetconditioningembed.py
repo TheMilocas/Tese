@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torchsummary import summary
 from typing import Tuple
 
 def zero_module(module):
@@ -108,7 +109,7 @@ conditioning_dim = 512        # ArcFace embedding size
 target_shape = (1280, 8, 8)   # Middle block shape
 embedding_channels = 1280     # UNet's middle block channels
 
-embedding_net = ControlNetConditioningEmbedding1(
+embedding_net = ControlNetConditioningEmbedding(
     conditioning_embedding_channels=embedding_channels,
     conditioning_dim=conditioning_dim,
     target_shape=target_shape
@@ -120,6 +121,8 @@ print(f"\nCreated dummy input: {dummy_input.shape}")
 # Run test
 print("\nRunning forward pass...")
 output = embedding_net(dummy_input)
+
+summary(embedding_net, (512,))
 
 print("\n")
 print("Final output shape:", output.shape)

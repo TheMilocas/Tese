@@ -355,7 +355,7 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
             num_attention_heads = (num_attention_heads,) * len(up_block_types)
 
         # mid
-        mid_block_channel = block_out_channels[-1]
+        mid_block_channel = block_out_channels[0]
 
         controlnet_block = nn.Conv2d(mid_block_channel, mid_block_channel, kernel_size=1)
         controlnet_block = zero_module(controlnet_block)
@@ -403,18 +403,20 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
         for i, up_block_type in enumerate(up_block_types):
             prev_channel = reversed_block_out_channels[i]
             output_channel = reversed_block_out_channels[i + 1] if i < len(reversed_block_out_channels) - 1 else block_out_channels[0]
-
+            prev_output_channel = (reversed_block_out_channels[i + 1] if i < len(reversed_block_out_channels) - 1 else reversed_block_out_channels[-1])
+            
             up_block = get_up_block(
                 up_block_type,
                 num_layers=layers_per_block,
                 transformer_layers_per_block=transformer_layers_per_block[i],
                 in_channels=prev_channel,
                 out_channels=output_channel,
-                prev_output_channel=None,
+                prev_output_channel=prev_output_channel,
                 temb_channels=time_embed_dim,
                 add_upsample=i != 0,  # Don't upsample first block
                 resnet_eps=norm_eps,
                 resnet_act_fn=act_fn,
+                resnet_groups=norm_num_groups,
                 cross_attention_dim=cross_attention_dim,
                 num_attention_heads=num_attention_heads[i],
                 attention_head_dim=attention_head_dim[i],
@@ -790,7 +792,7 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
 
         controlnet_cond = self.controlnet_cond_embedding(controlnet_cond) # (b, 512) -> (b, c, h, w)
         sample = sample + controlnet_cond
-
+        
         # 3. mid
         up_block_res_samples = []
 

@@ -64,7 +64,7 @@ def test_forward_pass_shapes():
     assert output.mid_block_res_sample.shape == (batch_size, 1280, 8, 8)
 
     for i, res_sample in enumerate(output.up_block_res_samples):
-        expected_channels = model.block_out_channels[::-1][i]
+        expected_channels = model.block_out_channels[i]
         assert res_sample.shape[1] == expected_channels
     print("Passed")
 

@@ -35,11 +35,83 @@ from ..unets.unet_2d_blocks import (
     UNetMidBlock2DCrossAttn,
     get_up_block,
 )
+from ..resnet import ResnetBlock2D, Upsample2D
 from ..unets.unet_2d_condition import UNet2DConditionModel
 
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
+class NoSkipUpBlock2D(nn.Module):
+    def __init__(
+        self,
+        in_channels: int,
+        prev_output_channel: int,
+        out_channels: int,
+        temb_channels: int,
+        resolution_idx: Optional[int] = None,
+        dropout: float = 0.0,
+        num_layers: int = 1,
+        resnet_eps: float = 1e-6,
+        resnet_time_scale_shift: str = "default",
+        resnet_act_fn: str = "swish",
+        resnet_groups: int = 32,
+        resnet_pre_norm: bool = True,
+        output_scale_factor: float = 1.0,
+        add_upsample: bool = True,
+    ):
+        super().__init__()
+        resnets = []
+
+        for i in range(num_layers):
+            resnet_in_channels = prev_output_channel if i == 0 else out_channels
+
+            resnets.append(
+                ResnetBlock2D(
+                    in_channels=resnet_in_channels,
+                    out_channels=out_channels,
+                    temb_channels=temb_channels,
+                    eps=resnet_eps,
+                    groups=resnet_groups,
+                    dropout=dropout,
+                    time_embedding_norm=resnet_time_scale_shift,
+                    non_linearity=resnet_act_fn,
+                    output_scale_factor=output_scale_factor,
+                    pre_norm=resnet_pre_norm,
+                )
+            )
+
+        self.resnets = nn.ModuleList(resnets)
+
+        if add_upsample:
+            self.upsamplers = nn.ModuleList([Upsample2D(out_channels, use_conv=True, out_channels=out_channels)])
+        else:
+            self.upsamplers = None
+
+        self.gradient_checkpointing = False
+        self.resolution_idx = resolution_idx
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        res_hidden_states_tuple: Tuple[torch.Tensor, ...] = None,  # Made optional
+        temb: Optional[torch.Tensor] = None,
+        upsample_size: Optional[int] = None,
+        *args,
+        **kwargs,
+    ) -> Tuple[torch.Tensor, Tuple]:
+        
+        for resnet in self.resnets:
+            if torch.is_grad_enabled() and self.gradient_checkpointing:
+                hidden_states = self._gradient_checkpointing_func(resnet, hidden_states, temb)
+            else:
+                hidden_states = resnet(hidden_states, temb)
+
+        if self.upsamplers is not None:
+            for upsampler in self.upsamplers:
+                hidden_states = upsampler(hidden_states, upsample_size)
+
+        # Return empty tuple for residuals to maintain interface
+        return hidden_states, ()
 
 @dataclass
 class ControlNetOutput(BaseOutput):
@@ -187,7 +259,7 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
         ),
         mid_block_type: Optional[str] = "UNetMidBlock2DCrossAttn",
         only_cross_attention: Union[bool, Tuple[bool]] = False,
-        block_out_channels: Tuple[int, ...] = (320, 640, 1280, 1280),
+        block_out_channels: Tuple[int, ...] = (1280, 1280, 640, 320),
         layers_per_block: int = 2,
         upsample_padding: int = 1,
         mid_block_scale_factor: float = 1,
@@ -341,10 +413,7 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
             conditioning_dim=conditioning_dim,
             target_shape=target_shape
         )
-
-        self.up_blocks = nn.ModuleList([])
-        self.controlnet_up_blocks = nn.ModuleList([])
-
+        
         if isinstance(only_cross_attention, bool):
             only_cross_attention = [only_cross_attention] * len(up_block_types)
 
@@ -378,7 +447,7 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
             )
         elif mid_block_type == "UNetMidBlock2D":
             self.mid_block = UNetMidBlock2D(
-                in_channels=block_out_channels[-1],
+                in_channels=mid_block_channel,
                 temb_channels=time_embed_dim,
                 num_layers=0,
                 resnet_eps=norm_eps,
@@ -391,47 +460,42 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
         else:
             raise ValueError(f"unknown mid_block_type : {mid_block_type}")
         
-        # up
-        # output_channel = block_out_channels[0]
-
-        # controlnet_block = nn.Conv2d(output_channel, output_channel, kernel_size=1)
-        # controlnet_block = zero_module(controlnet_block)
-        # self.controlnet_up_blocks.append(controlnet_block)
-
-        reversed_block_out_channels = list(reversed(block_out_channels))
+        # up                
+        self.up_blocks = nn.ModuleList([])
+        self.controlnet_up_blocks = nn.ModuleList([])
         
         for i, up_block_type in enumerate(up_block_types):
-            prev_channel = reversed_block_out_channels[i]
-            output_channel = reversed_block_out_channels[i + 1] if i < len(reversed_block_out_channels) - 1 else block_out_channels[0]
-            prev_output_channel = (reversed_block_out_channels[i + 1] if i < len(reversed_block_out_channels) - 1 else reversed_block_out_channels[-1])
+            input_channels = block_out_channels[i]
+            out_channels = block_out_channels[i]
+            is_final_block = i == len(block_out_channels) - 1
             
-            up_block = get_up_block(
-                up_block_type,
-                num_layers=layers_per_block,
-                transformer_layers_per_block=transformer_layers_per_block[i],
-                in_channels=prev_channel,
-                out_channels=output_channel,
+            # Special handling for first block to prevent channel mismatch
+            if i == 0:
+                prev_output_channel = input_channels
+            else:
+                prev_output_channel = block_out_channels[i-1]
+        
+            print(f"Creating UpBlock {i}: in={input_channels}, out={out_channels}, prev={prev_output_channel}")
+            
+            up_block = NoSkipUpBlock2D(
+                in_channels=in_channels,
                 prev_output_channel=prev_output_channel,
+                out_channels=out_channels,
                 temb_channels=time_embed_dim,
-                add_upsample=i != 0,  # Don't upsample first block
+                num_layers=layers_per_block,
                 resnet_eps=norm_eps,
                 resnet_act_fn=act_fn,
                 resnet_groups=norm_num_groups,
-                cross_attention_dim=cross_attention_dim,
-                num_attention_heads=num_attention_heads[i],
-                attention_head_dim=attention_head_dim[i],
-                use_linear_projection=use_linear_projection,
-                only_cross_attention=only_cross_attention[i],
-                upcast_attention=upcast_attention,
-                resnet_time_scale_shift=resnet_time_scale_shift,
+                add_upsample=i != 0,
+                output_scale_factor=mid_block_scale_factor
             )
             self.up_blocks.append(up_block)
 
-            for _ in range(layers_per_block):
-                controlnet_block = nn.Conv2d(output_channel, output_channel, kernel_size=1)
-                controlnet_block = zero_module(controlnet_block)
-                self.controlnet_up_blocks.append(controlnet_block)
-        
+            controlnet_block = nn.Conv2d(out_channels, out_channels, kernel_size=1)
+            controlnet_block = zero_module(controlnet_block)
+            self.controlnet_up_blocks.append(controlnet_block)
+            
+            print(f"Up block {i}: in={prev_output_channel}, out={out_channels}, norm_groups={up_block.resnets[0].norm1.num_groups}")
 
     @classmethod
     def from_unet(
@@ -789,15 +853,13 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
 
         # 2. pre-process
         sample = self.conv_in(sample)
-
-        controlnet_cond = self.controlnet_cond_embedding(controlnet_cond) # (b, 512) -> (b, c, h, w)
+        controlnet_cond = self.controlnet_cond_embedding(controlnet_cond)
         sample = sample + controlnet_cond
-        
-        # 3. mid
-        up_block_res_samples = []
-
+        print(f"Sample after conditioning: {sample.shape}")
+    
+        # 3. Mid block
         if self.mid_block is not None:
-            if hasattr(self.mid_block, "has_cross_attention") and self.mid_block.has_cross_attention:
+            if hasattr(self.mid_block, "has_cross_attention"):
                 sample = self.mid_block(
                     sample,
                     emb,
@@ -807,58 +869,64 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
                 )
             else:
                 sample = self.mid_block(sample, emb)
-
+    
         mid_block_res_sample = self.controlnet_mid_block(sample)
+        print(f"Mid block output shape: {mid_block_res_sample.shape}")
+    
+        # 4. Up blocks processing
+        up_block_res_samples = []
         
-        for up_block in self.up_blocks:
+        for i, up_block in enumerate(self.up_blocks):
+            print(f"\nProcessing UpBlock {i}")
+            print(f"Input shape: {sample.shape}")
+    
+            # Process through up block (no residual handling needed)
             if hasattr(up_block, "has_cross_attention") and up_block.has_cross_attention:
-                sample, res_samples = up_block(
+                sample, _ = up_block(
                     hidden_states=sample,
+                    res_hidden_states_tuple=(),  # Empty tuple for our custom block
                     temb=emb,
                     encoder_hidden_states=encoder_hidden_states,
                     attention_mask=attention_mask,
                     cross_attention_kwargs=cross_attention_kwargs,
                 )
             else:
-                sample, res_samples = up_block(hidden_states=sample, temb=emb)
-
-            sample = up_block(sample, emb)
-
-        # 5. Control net blocks
-            # controlnet_block = self.controlnet_up_blocks[i]
-            # up_block_res_samples.append(controlnet_block(sample))   #modified
-            
-        controlnet_up_block_res_samples = ()
-
-        for up_block_res_sample, controlnet_block in zip(up_block_res_samples, self.controlnet_up_blocks):
-            up_block_res_sample = controlnet_block(up_block_res_sample)
-            controlnet_up_block_res_samples = controlnet_up_block_res_samples + (up_block_res_sample,)
-
-        up_block_res_samples = controlnet_up_block_res_samples
-
-        # 6. scaling
+                sample, _ = up_block(
+                    hidden_states=sample,
+                    res_hidden_states_tuple=(),  # Empty tuple
+                    temb=emb,
+                )
+    
+            print(f"Output shape: {sample.shape}")
+    
+            # Apply controlnet block
+            controlled_sample = self.controlnet_up_blocks[i](sample)
+            up_block_res_samples.append(controlled_sample)
+            print(f"Controlled sample shape: {controlled_sample.shape}")
+    
+        # 5. Scaling
         if guess_mode and not self.config.global_pool_conditions:
-            scales = torch.logspace(-1, 0, len(up_block_res_samples) + 1, device=sample.device)  # 0.1 to 1.0
+            scales = torch.logspace(-1, 0, len(up_block_res_samples) + 1, device=sample.device)
             scales = scales * conditioning_scale
             up_block_res_samples = [sample * scale for sample, scale in zip(up_block_res_samples, scales)]
-            mid_block_res_sample = mid_block_res_sample * scales[-1]  # last one
+            mid_block_res_sample = mid_block_res_sample * scales[-1]
         else:
             up_block_res_samples = [sample * conditioning_scale for sample in up_block_res_samples]
             mid_block_res_sample = mid_block_res_sample * conditioning_scale
-
+    
         if self.config.global_pool_conditions:
             up_block_res_samples = [
                 torch.mean(sample, dim=(2, 3), keepdim=True) for sample in up_block_res_samples
             ]
             mid_block_res_sample = torch.mean(mid_block_res_sample, dim=(2, 3), keepdim=True)
-
+    
         if not return_dict:
             return (up_block_res_samples, mid_block_res_sample)
 
         return ControlNetOutput(
-        down_block_res_samples=up_block_res_samples[::-1],  # Reverse to match original order
-        mid_block_res_sample=mid_block_res_sample
-    )
+            up_block_res_samples=up_block_res_samples,
+            mid_block_res_sample=mid_block_res_sample
+        )
 
 
 def zero_module(module):

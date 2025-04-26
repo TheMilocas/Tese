@@ -17,7 +17,7 @@ from mmseg.models.losses.silog_loss import silog_loss
 from torchvision.transforms import RandomCrop
 
 
-def get_reward_model(task='segmentation', model_path='mmseg::upernet/upernet_r50_4xb4-160k_ade20k-512x512.py'):
+def get_reward_model(task='identity', model_path='mmseg::upernet/upernet_r50_4xb4-160k_ade20k-512x512.py'):
     """Return reward model for different tasks.
 
     Args:

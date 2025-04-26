@@ -34,4 +34,4 @@ __pycache__/
 # Large output folders
 ARCFACE/celebahq-idi
 ARCFACE/models
-diffusers
+trained_controlnet_inicial

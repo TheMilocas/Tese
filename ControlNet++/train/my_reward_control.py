@@ -272,6 +272,18 @@ def parse_args(input_args=None):
         help="Probability of dropping identity conditioning",
     )
     parser.add_argument(
+        "--embedding_dim",
+        type=int,
+        default=512,
+        help="Dimension of ARCFACE embeddings",
+    )
+    parser.add_argument(
+        "--min_identity_similarity", 
+        type=float,
+        default=0.7,
+        help="Minimum cosine similarity threshold for identity preservation",
+    )
+    parser.add_argument(
         "--pretrained_model_name_or_path",
         type=str,
         default=None,
@@ -538,7 +550,7 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--task_name",
         type=str,
-        default='identity',
+        default='identity_inpainting',
     )
     parser.add_argument(
         "--dataset_name",
@@ -609,12 +621,6 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
-        "--image_condition_dropout",
-        type=float,
-        default=0,
-        help="Probability of image conditions to be replaced with tensors with zero value. Defaults to 0.",
-    )
-    parser.add_argument(
         "--text_condition_dropout",
         type=float,
         default=0,
@@ -627,6 +633,12 @@ def parse_args(input_args=None):
         help="Probability of abandon all the conditions.",
     )
     parser.add_argument(
+        "--validation_identity",
+        type=str,
+        default=None,
+        help="Path to identity embedding(s) for validation",
+    )
+    parser.add_argument(
         "--validation_prompt",
         type=str,
         default=None,
@@ -636,24 +648,6 @@ def parse_args(input_args=None):
             " Provide either a matching number of `--validation_image`s, a single `--validation_image`"
             " to be used with all prompts, or a single prompt that will be used with all `--validation_image`s."
         ),
-    )
-    parser.add_argument(
-        "--validation_image",
-        type=str,
-        default=None,
-        nargs="+",
-        help=(
-            "A set of paths to the controlnet conditioning image be evaluated every `--validation_steps`"
-            " and logged to `--report_to`. Provide either a matching number of `--validation_prompt`s, a"
-            " a single `--validation_prompt` to be used with all `--validation_image`s, or a single"
-            " `--validation_image` that will be used with all `--validation_prompt`s."
-        ),
-    )
-    parser.add_argument(
-        "--num_validation_images",
-        type=int,
-        default=2,
-        help="Number of images to be generated for each `--validation_image`, `--validation_prompt` pair",
     )
     parser.add_argument(
         "--validation_steps",
@@ -688,25 +682,10 @@ def parse_args(input_args=None):
 
     if args.text_condition_dropout < 0 or args.text_condition_dropout > 1:
         raise ValueError("`--text_condition_dropout` must be in the range [0, 1].")
-
-    if args.validation_prompt is not None and args.validation_image is None:
-        raise ValueError("`--validation_image` must be set if `--validation_prompt` is set")
-
-    if args.validation_prompt is None and args.validation_image is not None:
-        raise ValueError("`--validation_prompt` must be set if `--validation_image` is set")
-
-    if (
-        args.validation_image is not None
-        and args.validation_prompt is not None
-        and len(args.validation_image) != 1
-        and len(args.validation_prompt) != 1
-        and len(args.validation_image) != len(args.validation_prompt)
-    ):
-        raise ValueError(
-            "Must provide either 1 `--validation_image`, 1 `--validation_prompt`,"
-            " or the same number of `--validation_prompt`s and `--validation_image`s"
-        )
-
+        
+    if args.task_name == 'identity_inpainting' and args.identity_column is None:
+        raise ValueError("Must specify --identity_column for identity inpainting")
+    
     if args.resolution % 8 != 0:
         raise ValueError(
             "`--resolution` must be divisible by 8 for consistently sized encoded images between the VAE and the controlnet encoder."
@@ -894,20 +873,21 @@ def make_train_dataset(args, tokenizer, accelerator, split='train'):
 def collate_fn(examples):
     pixel_values = torch.stack([example["pixel_values"] for example in examples])
     pixel_values = pixel_values.to(memory_format=torch.contiguous_format).float()
-
+    
+    identity_embeddings = torch.stack([example["identity_embedding"] for example in examples])
+    
     input_ids = torch.stack([example["input_ids"] for example in examples])
-
-    if args.label_column is not None:
-        labels = torch.stack([example[args.label_column] for example in examples])
-        labels = labels.to(memory_format=torch.contiguous_format).float()
-    else:
-        labels = conditioning_pixel_values
-
+    
+    masks = None
+    if "mask" in examples[0] and examples[0]["mask"] is not None:
+        masks = torch.stack([example["mask"] for example in examples])
+        masks = masks.to(memory_format=torch.contiguous_format).float()
+    
     return {
         "pixel_values": pixel_values,
-        "conditioning_pixel_values": conditioning_pixel_values,
+        "identity_embedding": identity_embeddings, 
         "input_ids": input_ids,
-        "labels": labels,
+        "mask": masks,  
     }
 
 

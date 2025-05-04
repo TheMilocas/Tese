@@ -810,53 +810,20 @@ def make_train_dataset(args, tokenizer, accelerator, split='train'):
     )
 
     def preprocess_train(examples):
-        pil_images = [image.convert("RGB") for image in examples[image_column]]
-        images = [image_transforms(image) for image in pil_images]
-
-        if args.conditioning_image_column in ['canny', 'lineart', 'hed']:
-            conditioning_images = images
-        else:
-            conditioning_images = [image.convert("RGB") for image in examples[conditioning_image_column]]
-            conditioning_images = [conditioning_image_transforms(image) for image in conditioning_images]
-
-        if args.label_column is not None:
-            dtype = torch.long
-            labels = [torch.tensor(np.asarray(label), dtype=dtype).unsqueeze(0) for label in examples[args.label_column]]
-            labels = [label_image_transforms(label) for label in labels]
-
-        # perform groupped random crop for image/conditioning_image/label
-        if args.label_column is not None:
-            grouped_data = [torch.cat([x, y, z]) for (x, y, z) in zip(images, conditioning_images, labels)]
-            grouped_data = group_random_crop(grouped_data, args.resolution)
-
-            images = [x[:3, :, :] for x in grouped_data]
-            conditioning_images = [x[3:6, :, :] for x in grouped_data]
-            labels = [x[6:, :, :] for x in grouped_data]
-
-        else:
-            grouped_data = [torch.cat([x, y]) for (x, y) in zip(images, conditioning_images)]
-            grouped_data = group_random_crop(grouped_data, args.resolution)
-
-            images = [x[:3, :, :] for x in grouped_data]
-            conditioning_images = [x[3:, :, :] for x in grouped_data]
-
-        # Dropout some of features for classifier-free guidance.
-        for i, img_condition in enumerate(conditioning_images):
-            rand_num = random.random()
-            if rand_num < args.image_condition_dropout:
-                conditioning_images[i] = torch.zeros_like(img_condition)
-            elif rand_num < args.image_condition_dropout + args.text_condition_dropout:
-                examples[caption_column][i] = ""
-            elif rand_num < args.image_condition_dropout + args.text_condition_dropout + args.all_condition_dropout:
-                conditioning_images[i] = torch.zeros_like(img_condition)
-                examples[caption_column][i] = ""
-
-        examples["pixel_values"] = images
-        examples["conditioning_pixel_values"] = conditioning_images
-        examples["input_ids"] = tokenize_captions(examples)
-
-        return examples
-
+        # Load images normally
+        images = [Image.open(img).convert("RGB") for img in examples["image_file"]]
+        images = [image_transforms(img) for img in images]
+        
+        # Load identity embeddings
+        conditions = [np.load(cond) for cond in examples["condition_file"]]
+        conditions = [torch.from_numpy(cond).float() for cond in conditions]
+        
+        return {
+            "pixel_values": images,
+            "conditioning_pixel_values": conditions,  # Will be renamed later
+            "input_ids": tokenize_captions(examples),
+        }
+    
     with accelerator.main_process_first():
         if args.max_train_samples is not None:
             dataset["train"] = dataset["train"].shuffle(seed=args.seed)

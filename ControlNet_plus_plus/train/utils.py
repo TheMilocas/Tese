@@ -2,6 +2,11 @@ import torch
 import torch.nn as nn
 import numpy as np
 import torchvision.transforms.functional as F
+import onnxruntime as ort
+
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from PIL import Image
 from typing import Optional
@@ -15,9 +20,22 @@ from transformers import DPTForDepthEstimation  # depth estimation
 
 from mmseg.models.losses.silog_loss import silog_loss
 from torchvision.transforms import RandomCrop
+from torchvision import transforms
 
 
-def get_reward_model(task='identity', model_path='mmseg::upernet/upernet_r50_4xb4-160k_ade20k-512x512.py'):
+class ARCFACE:
+    def __init__(self, model_path):
+        self.sess = ort.InferenceSession(model_path)
+        self.transform = transforms.Compose([
+            transforms.Resize((112, 112)),
+            transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
+        ])
+        
+    def __call__(self, images):
+        inputs = self.transform(images).numpy()
+        return torch.from_numpy(self.sess.run(None, {"input.1": inputs})[0])
+        
+def get_reward_model(task='segmentation', model_path='mmseg::upernet/upernet_r50_4xb4-160k_ade20k-512x512.py'):
     """Return reward model for different tasks.
 
     Args:
@@ -37,6 +55,8 @@ def get_reward_model(task='identity', model_path='mmseg::upernet/upernet_r50_4xb
         return model
     elif task == 'hed':
         return HEDdetector(model_path)
+    elif task == 'identity':
+        return ARCFACE(model_path)
     else:
         raise not NotImplementedError("Only support segmentation, canny and depth for now.")
 

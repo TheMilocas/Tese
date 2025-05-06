@@ -1,29 +1,28 @@
 import os
 import json
-from tqdm import tqdm
 
-image_dir = 'datasets/celebahq/masked_images'
-condition_dir = 'datasets/celebahq/conditions'
-output_json_path = 'datasets/celebahq/metadata.json'
+dataset_root = "datasets/celebahq"
+splits = ['train', 'val', 'test']
 
-metadata = []
+for split in splits:
+    metadata = []
+    image_dir = f"{dataset_root}/{split}/images"
+    
+    for img_file in os.listdir(image_dir):
+        base = os.path.splitext(img_file)[0]
+        
+        entry = {
+            "image": f"{split}/images/{img_file}",
+            "masked_image": f"{split}/masked/{base}.jpg",
+            "mask": f"{split}/masks/{base}.png",
+            "embedding_masked": f"{split}/emb_masked/{base}.npy",
+            "embedding_clean": f"{split}/emb_clean/{base}.npy",
+            "prompt": "" 
+        }
 
-image_filenames = sorted([f for f in os.listdir(image_dir) if f.lower().endswith(('.jpg', '.png', '.jpeg'))])
-
-for img_name in tqdm(image_filenames):
-    img_path = os.path.join('masked_images', img_name)
-    condition_filename = os.path.splitext(img_name)[0] + '.npy'
-    condition_path = os.path.join('conditions', condition_filename)
-
-    entry = {
-        "image": img_path,
-        "condition": condition_path,
-        "prompt": "" 
-    }
-
-    metadata.append(entry)
-
-with open(output_json_path, 'w') as f:
-    json.dump(metadata, f, indent=2)
-
-print(f"\nMetadata JSON saved to {output_json_path} with {len(metadata)} entries.")
+        if all(os.path.exists(f"{dataset_root}/{v}") for k,v in entry.items() if k != 'prompt'):
+            metadata.append(entry)
+    
+    with open(f"{dataset_root}/{split}_metadata.jsonl", 'w') as f:
+        for item in metadata:
+            f.write(json.dumps(item) + '\n')

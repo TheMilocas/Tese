@@ -87,7 +87,6 @@ logger = get_logger(__name__)
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, StateDictType, FullStateDictConfig
 full_state_dict_config = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
 
-
 def log_validation(
         vae,
         text_encoder,
@@ -150,12 +149,12 @@ def log_validation(
     assert val_dataset is not None, "Validation dataset is required for logging validation images."
     try:
         validation_images = val_dataset[image_column]
-        validation_prompts = val_dataset[caption_column]
+        validation_prompts = [""] * len(validation_images)
         if args.task_name != 'identity':
             validation_conditions = val_dataset[conditioning_image_column]
     except:
         validation_images = [item[image_column] for item in val_dataset]
-        validation_prompts = [item[caption_column] for item in val_dataset]
+        validation_prompts = [""] * len(validation_images)
         if args.task_name != 'identity':
             validation_conditions = [item[conditioning_image_column] for item in val_dataset]
 
@@ -715,7 +714,7 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--task_name",
         type=str,
-        default='segmentation',
+        default='identity',
     )
     parser.add_argument(
         "--dataset_name",
@@ -985,17 +984,17 @@ def make_train_dataset(args, tokenizer, accelerator, split='train'):
             )
 
     def tokenize_captions(examples, is_train=True):
-        captions = []
-        for caption in examples[caption_column]:
-            if isinstance(caption, str):
-                captions.append(caption)
-            elif isinstance(caption, (list, np.ndarray)):
-                # take a random caption if there are multiple
-                captions.append(random.choice(caption) if is_train else caption[0])
-            else:
-                raise ValueError(
-                    f"Caption column `{caption_column}` should contain either strings or lists of strings."
-                )
+        captions = ["" for _ in examples[caption_column]] 
+        # for caption in examples[caption_column]:
+        #     if isinstance(caption, str):
+        #         captions.append(caption)
+        #     elif isinstance(caption, (list, np.ndarray)):
+        #         # take a random caption if there are multiple
+        #         captions.append(random.choice(caption) if is_train else caption[0])
+        #     else:
+        #         raise ValueError(
+        #             f"Caption column `{caption_column}` should contain either strings or lists of strings."
+        #         )
         inputs = tokenizer(
             captions, max_length=tokenizer.model_max_length, padding="max_length", truncation=True, return_tensors="pt"
         )

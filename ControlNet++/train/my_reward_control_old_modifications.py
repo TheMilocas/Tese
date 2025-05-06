@@ -107,13 +107,6 @@ def log_validation(
             random.sample(range(len(val_dataset)), args.max_val_samples)
         )
 
-    if args.task_name in ['lineart', 'hed', 'identity']:
-        reward_model = get_reward_model(args.task_name, args.reward_model_name_or_path)
-        reward_model.to(accelerator.device)
-        reward_model.eval()
-    else:
-        reward_model = None
-
     controlnet = accelerator.unwrap_model(controlnet)
 
     pipeline = StableDiffusionControlNetPipeline.from_pretrained(
@@ -142,106 +135,19 @@ def log_validation(
     image_column = args.image_column
     caption_column = args.caption_column
 
-    if args.conditioning_image_column in ['canny', 'lineart', 'hed', 'identity']:
-        conditioning_image_column = image_column
-    else:
-        conditioning_image_column = args.conditioning_image_column
-
-    assert val_dataset is not None, "Validation dataset is required for logging validation images."
-    try:
-        validation_images = val_dataset[image_column]
-        validation_prompts = val_dataset[caption_column]
-        if args.task_name != 'identity':
-            validation_conditions = val_dataset[conditioning_image_column]
-    except:
-        validation_images = [item[image_column] for item in val_dataset]
-        validation_prompts = [item[caption_column] for item in val_dataset]
-        if args.task_name != 'identity':
-            validation_conditions = [item[conditioning_image_column] for item in val_dataset]
-
-    if args.task_name == 'identity':
-        # Get identity embeddings from validation set
-        validation_embeddings = [item["identity_embedding"] for item in val_dataset]
-        validation_embeddings = torch.stack(validation_embeddings).to(accelerator.device)
-    else:
-        # Avoid some problems caused by grayscale images
-        validation_conditions = [x.convert('RGB') for x in validation_conditions]
-        
-        if args.conditioning_image_column == "canny":
-            low_threshold = 0.1 # low_threshold = random.uniform(0, 1)
-            high_threshold = 0.2 # high_threshold = random.uniform(low_threshold, 1)
-            with autocast():
-                validation_conditions = [torchvision.transforms.functional.pil_to_tensor(x) for x in validation_conditions]
-                validation_conditions = [x / 255. for x in validation_conditions]
-                validation_conditions = kornia.filters.canny(torch.stack(validation_conditions), low_threshold, high_threshold)[1]
-                validation_conditions = torch.chunk(validation_conditions, len(validation_conditions), dim=0)
-                validation_conditions = [torchvision.transforms.functional.to_pil_image(x.squeeze(0), 'L') for x in validation_conditions]
-        elif args.conditioning_image_column in ['lineart', 'hed']:
-            with autocast():
-                validation_conditions = [torchvision.transforms.functional.pil_to_tensor(x) for x in validation_conditions]
-                validation_conditions = [x / 255. for x in validation_conditions]
-                validation_conditions = [torchvision.transforms.functional.resize(x, (512, 512), interpolation=Image.BICUBIC) for x in validation_conditions]
-                with torch.no_grad():
-                    validation_conditions = reward_model(torch.stack(validation_conditions).to(accelerator.device))
-                validation_conditions = 1 - validation_conditions if args.task_name == 'lineart' else validation_conditions
-                validation_conditions = torch.chunk(validation_conditions, len(validation_conditions), dim=0)
-                validation_conditions = [torchvision.transforms.functional.to_pil_image(x.squeeze(0), 'L') for x in validation_conditions]
-
     image_logs = []
-    identity_similarities = []
-    
-    logger.info(f"Running validation with {len(validation_prompts)} prompts... ")
-    for i, (validation_prompt, validation_image) in enumerate(zip(validation_prompts, validation_images)):
-        if val_dataset is not None:
-            validation_image = validation_image.convert('RGB').resize((512, 512), Image.Resampling.BICUBIC)
-        
-        if args.task_name == 'identity':
-            # For identity mode, we use the embedding as condition
-            validation_embedding = validation_embeddings[i].unsqueeze(0)
-            with torch.autocast("cuda"):
-                images = pipeline(
-                    [validation_prompt] * args.num_validation_images,
-                    identity_embeddings=[validation_embedding] * args.num_validation_images,
-                    num_inference_steps=20,
-                    generator=generator
-                ).images
-            
-            # Calculate identity similarity
-            with torch.no_grad():
-                # Preprocess generated images for ARCFACE
-                processed_images = torch.stack([
-                    transforms.Compose([
-                        transforms.ToTensor(),
-                        transforms.Resize((112, 112)),
-                        transforms.Normalize([0.5], [0.5])
-                    ])(img.convert("RGB")) for img in images
-                ]).to(accelerator.device)
-                
-                output_embeddings = reward_model(processed_images)
-                similarities = F.cosine_similarity(output_embeddings, validation_embedding)
-                identity_similarities.extend(similarities.cpu().tolist())
-            
-            # Create dummy condition image for logging
-            validation_condition = Image.new('RGB', (512, 512), (0, 0, 0))
-        else:
-            # Original image-based conditioning
-            validation_condition = validation_conditions[i]
-            if val_dataset is not None:
-                validation_condition = validation_condition.convert('RGB').resize((512, 512), Image.Resampling.BICUBIC)
-            else:
-                validation_condition = Image.open(validation_condition).convert("RGB").resize((512, 512), Image.Resampling.BICUBIC)
 
-            with torch.autocast("cuda"):
-                images = pipeline(
-                    [validation_prompt] * args.num_validation_images,
-                    [validation_condition] * args.num_validation_images,
-                    num_inference_steps=20,
-                    generator=generator
-                ).images
+    logger.info(f"Running validation with {len(validation_prompts)} prompts... ")
+    for validation_prompt, validation_embedding in zip(validation_prompts, validation_embeddings):
+        with torch.autocast("cuda"):
+            images = pipeline(
+                [validation_prompt] * args.num_validation_images,
+                identity_embedding=[validation_embedding] * args.num_validation_images,
+                num_inference_steps=20,
+                generator=generator
+            ).images
 
         image_logs.append({
-            "validation_image": validation_image,
-            "validation_condition": validation_condition,
             "validation_prompt": validation_prompt,
             "images": images,
             'ema_images': []
@@ -270,108 +176,28 @@ def log_validation(
             pipeline.enable_xformers_memory_efficient_attention()
 
         logger.info(f"Running validation with {len(validation_prompts)} prompts... ")
-        for idx, (validation_prompt, validation_image) in enumerate(zip(validation_prompts, validation_images)):
-            if args.task_name == 'identity':
-                validation_embedding = validation_embeddings[idx].unsqueeze(0)
-                with torch.autocast("cuda"):
-                    images = pipeline(
-                        [validation_prompt] * args.num_validation_images,
-                        identity_embeddings=[validation_embedding] * args.num_validation_images,
-                        num_inference_steps=20,
-                        generator=generator
-                    ).images
-
-                with torch.no_grad():
-                    processed_images = torch.stack([
-                        transforms.Compose([
-                            transforms.ToTensor(),
-                            transforms.Resize((112, 112)),
-                            transforms.Normalize([0.5], [0.5])
-                        ])(img.convert("RGB")) for img in images
-                    ]).to(accelerator.device)
-                    
-                    output_embeddings = reward_model(processed_images)
-                    similarities = F.cosine_similarity(output_embeddings, validation_embedding)
-                    identity_similarities.extend(similarities.cpu().tolist())
-            else:
-                validation_condition = validation_conditions[idx]
-                if val_dataset is not None:
-                    validation_condition = validation_condition.convert('RGB').resize((512, 512), Image.Resampling.BICUBIC)
-                else:
-                    validation_condition = Image.open(validation_condition).convert("RGB").resize((512, 512), Image.Resampling.BICUBIC)
-
-                with torch.autocast("cuda"):
-                    images = pipeline(
-                        [validation_prompt] * args.num_validation_images,
-                        [validation_condition] * args.num_validation_images,
-                        num_inference_steps=20,
-                        generator=generator
-                    ).images
-
+        for idx, (validation_prompt, validation_embedding) in enumerate(zip(validation_prompts, validation_embeddings)):
+            with torch.autocast("cuda"):
+                images = pipeline(
+                    [validation_prompt] * args.num_validation_images,
+                    identity_embedding=[validation_embedding] * args.num_validation_images,
+                    num_inference_steps=20,
+                    generator=generator
+                ).images
             image_logs[idx]['ema_images'] = images
 
 
     for tracker in accelerator.trackers:
-        if tracker.name == "tensorboard":
-            for log in image_logs:
-                images = log["images"]
-                ema_images = log["ema_images"]
-                validation_prompt = log["validation_prompt"]
-                validation_image = log["validation_image"]
-                validation_condition = log["validation_condition"]
-
-                validation_prompt = validation_prompt + ['EMA'] * len(validation_prompt) #
-
-                formatted_images = []
-
-                formatted_images.append(np.asarray(validation_image))
-
-                for image in images:
-                    formatted_images.append(np.asarray(image))
-
-                for image in ema_images:
-                    formatted_images.append(np.asarray(image))
-
-                formatted_images = np.stack(formatted_images)
-
-                tracker.writer.add_images(validation_prompt, formatted_images, step, dataformats="NHWC")
-                
-            if args.task_name == 'identity' and len(identity_similarities) > 0:
-                avg_similarity = sum(identity_similarities) / len(identity_similarities)
-                tracker.writer.add_scalar("validation/avg_identity_similarity", avg_similarity, step)
-                
-        elif tracker.name == "wandb":
+        if tracker.name == "wandb":
             formatted_images = []
             for log in image_logs:
-                images = log["images"]
-                ema_images = log["ema_images"]
-                validation_prompt = log["validation_prompt"]
-                validation_image = log["validation_image"]
-                validation_condition = log["validation_condition"]
-
-                formatted_images.append(wandb.Image(validation_image, caption="Input image"))
-                formatted_images.append(wandb.Image(validation_condition, caption="Conditioning"))
-                
-                for image in images:
-                    formatted_images.append(wandb.Image(image, caption=validation_prompt))
-                for image in ema_images:
-                    formatted_images.append(wandb.Image(image, caption=f"EMA: {validation_prompt}"))
-
+                for image in log["images"]:
+                    formatted_images.append(wandb.Image(image, caption=log["validation_prompt"]))
+                for image in log['ema_images']:
+                    formatted_images.append(wandb.Image(image, caption='EMA'))
             tracker.log({"validation": formatted_images})
-            
-            if args.task_name == 'identity' and len(identity_similarities) > 0:
-                avg_similarity = sum(identity_similarities) / len(identity_similarities)
-                tracker.log({
-                    "validation/avg_identity_similarity": avg_similarity,
-                    "validation/identity_similarities": wandb.Histogram(identity_similarities)
-                })
-        else:
-            logger.warn(f"image logging not implemented for {tracker.name}")
 
-        if reward_model is not None:
-            reward_model = None
-
-        return image_logs
+    return image_logs
 
 
 def import_model_class_from_model_name_or_path(pretrained_model_name_or_path: str, revision: str):
@@ -434,19 +260,28 @@ These are controlnet weights trained on {base_model} with new type of conditioni
 def parse_args(input_args=None):
     parser = argparse.ArgumentParser(description="Simple example of a ControlNet training script.")
     parser.add_argument(
-        "--conditioning_type",
+        "--identity_column",
         type=str,
-        default="image",
-        choices=["image", "identity"],
-        help="Type of conditioning to use (image or identity embeddings)",
+        default="identity_embedding",
+        help="Column name for identity embeddings",
     )
-    
     parser.add_argument(
-        "--controlnet_architecture",
-        type=str,
-        default="original",
-        choices=["original", "upsample"],
-        help="ControlNet architecture variant to use",
+        "--identity_condition_dropout", 
+        type=float,
+        default=0.1,
+        help="Probability of dropping identity conditioning",
+    )
+    parser.add_argument(
+        "--embedding_dim",
+        type=int,
+        default=512,
+        help="Dimension of ARCFACE embeddings",
+    )
+    parser.add_argument(
+        "--min_identity_similarity", 
+        type=float,
+        default=0.7,
+        help="Minimum cosine similarity threshold for identity preservation",
     )
     parser.add_argument(
         "--pretrained_model_name_or_path",
@@ -614,7 +449,7 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--dataloader_num_workers",
         type=int,
-        default=16,
+        default=0,
         help=(
             "Number of subprocesses to use for data loading. 0 means that the data will be loaded in the main process."
         ),
@@ -715,7 +550,7 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--task_name",
         type=str,
-        default='segmentation',
+        default='identity_inpainting',
     )
     parser.add_argument(
         "--dataset_name",
@@ -757,12 +592,6 @@ def parse_args(input_args=None):
         "--image_column", type=str, default="image", help="The column of the dataset containing the target image."
     )
     parser.add_argument(
-        "--conditioning_image_column",
-        type=str,
-        default="conditioning_image",
-        help="The column of the dataset containing the controlnet conditioning image.",
-    )
-    parser.add_argument(
         "--caption_column",
         type=str,
         default="text",
@@ -792,12 +621,6 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
-        "--image_condition_dropout",
-        type=float,
-        default=0,
-        help="Probability of image conditions to be replaced with tensors with zero value. Defaults to 0.",
-    )
-    parser.add_argument(
         "--text_condition_dropout",
         type=float,
         default=0,
@@ -810,6 +633,12 @@ def parse_args(input_args=None):
         help="Probability of abandon all the conditions.",
     )
     parser.add_argument(
+        "--validation_identity",
+        type=str,
+        default=None,
+        help="Path to identity embedding(s) for validation",
+    )
+    parser.add_argument(
         "--validation_prompt",
         type=str,
         default=None,
@@ -819,24 +648,6 @@ def parse_args(input_args=None):
             " Provide either a matching number of `--validation_image`s, a single `--validation_image`"
             " to be used with all prompts, or a single prompt that will be used with all `--validation_image`s."
         ),
-    )
-    parser.add_argument(
-        "--validation_image",
-        type=str,
-        default=None,
-        nargs="+",
-        help=(
-            "A set of paths to the controlnet conditioning image be evaluated every `--validation_steps`"
-            " and logged to `--report_to`. Provide either a matching number of `--validation_prompt`s, a"
-            " a single `--validation_prompt` to be used with all `--validation_image`s, or a single"
-            " `--validation_image` that will be used with all `--validation_prompt`s."
-        ),
-    )
-    parser.add_argument(
-        "--num_validation_images",
-        type=int,
-        default=2,
-        help="Number of images to be generated for each `--validation_image`, `--validation_prompt` pair",
     )
     parser.add_argument(
         "--validation_steps",
@@ -871,25 +682,10 @@ def parse_args(input_args=None):
 
     if args.text_condition_dropout < 0 or args.text_condition_dropout > 1:
         raise ValueError("`--text_condition_dropout` must be in the range [0, 1].")
-
-    if args.validation_prompt is not None and args.validation_image is None:
-        raise ValueError("`--validation_image` must be set if `--validation_prompt` is set")
-
-    if args.validation_prompt is None and args.validation_image is not None:
-        raise ValueError("`--validation_prompt` must be set if `--validation_image` is set")
-
-    if (
-        args.validation_image is not None
-        and args.validation_prompt is not None
-        and len(args.validation_image) != 1
-        and len(args.validation_prompt) != 1
-        and len(args.validation_image) != len(args.validation_prompt)
-    ):
-        raise ValueError(
-            "Must provide either 1 `--validation_image`, 1 `--validation_prompt`,"
-            " or the same number of `--validation_prompt`s and `--validation_image`s"
-        )
-
+        
+    if args.task_name == 'identity_inpainting' and args.identity_column is None:
+        raise ValueError("Must specify --identity_column for identity inpainting")
+    
     if args.resolution % 8 != 0:
         raise ValueError(
             "`--resolution` must be divisible by 8 for consistently sized encoded images between the VAE and the controlnet encoder."
@@ -938,6 +734,14 @@ def make_train_dataset(args, tokenizer, accelerator, split='train'):
         # See more about loading custom images at
         # https://huggingface.co/docs/datasets/v2.0.0/en/dataset_script
 
+    if args.identity_column is None:
+        identity_column = column_names[2]  # Assuming 3rd column is identity
+        logger.info(f"identity column defaulting to {identity_column}")
+    else:
+        identity_column = args.identity_column
+        if identity_column not in column_names:
+            raise ValueError(f"Identity column not found in dataset")
+    
     # filter wrong files for MultiGen
     if args.wrong_ids_file is not None:
         all_idx = [i for i in range(len(dataset['train']))]
@@ -971,19 +775,6 @@ def make_train_dataset(args, tokenizer, accelerator, split='train'):
                 f"`--caption_column` value '{args.caption_column}' not found in dataset columns. Dataset columns are: {', '.join(column_names)}"
             )
 
-    if args.conditioning_image_column is None:
-        conditioning_image_column = column_names[2]
-        logger.info(f"conditioning image column defaulting to {conditioning_image_column}")
-    elif args.conditioning_image_column in ['canny', 'lineart', 'hed']:
-        conditioning_image_column = image_column
-        logger.info(f"conditioning image column defaulting to {conditioning_image_column}")
-    else:
-        conditioning_image_column = args.conditioning_image_column
-        if conditioning_image_column not in column_names:
-            raise ValueError(
-                f"`--conditioning_image_column` value '{args.conditioning_image_column}' not found in dataset columns. Dataset columns are: {', '.join(column_names)}"
-            )
-
     def tokenize_captions(examples, is_train=True):
         captions = []
         for caption in examples[caption_column]:
@@ -1011,14 +802,6 @@ def make_train_dataset(args, tokenizer, accelerator, split='train'):
         ]
     )
 
-    conditioning_image_transforms = transforms.Compose(
-        [
-            transforms.Resize(resolution, interpolation=transforms.InterpolationMode.BICUBIC, antialias=True),
-            # transforms.CenterCrop(args.resolution),
-            transforms.ToTensor(),
-        ]
-    )
-
     label_image_transforms = transforms.Compose(
         [
             transforms.Resize(resolution, interpolation=transforms.InterpolationMode.NEAREST, antialias=True),
@@ -1027,63 +810,20 @@ def make_train_dataset(args, tokenizer, accelerator, split='train'):
     )
 
     def preprocess_train(examples):
-        pil_images = [image.convert("RGB") for image in examples[image_column]]
-        images = [image_transforms(image) for image in pil_images]
-
-        if args.conditioning_type == "identity":
-            identity_embeddings = [torch.tensor(embedding) for embedding in examples["identity_embedding"]]
-            identity_embeddings = torch.stack(identity_embeddings)
-        else:
-            conditioning_images = [image.convert("RGB") for image in examples[conditioning_image_column]]
-            conditioning_images = [conditioning_image_transforms(image) for image in conditioning_images]
-            identity_embeddings = None
-
-        if args.label_column is not None:
-            dtype = torch.long
-            labels = [torch.tensor(np.asarray(label), dtype=dtype).unsqueeze(0) for label in examples[args.label_column]]
-            labels = [label_image_transforms(label) for label in labels]
-
-        # perform groupped random crop for image/conditioning_image/label
-        if args.label_column is not None:
-            grouped_data = [torch.cat([x, y, z]) for (x, y, z) in zip(images, conditioning_images, labels)]
-            grouped_data = group_random_crop(grouped_data, args.resolution)
-
-            images = [x[:3, :, :] for x in grouped_data]
-            conditioning_images = [x[3:6, :, :] for x in grouped_data]
-            labels = [x[6:, :, :] for x in grouped_data]
-
-            # (1, H, W) => (H, w)
-            if args.task_name == "segmentation":
-                labels = [label.squeeze(0) for label in labels]
-
-            examples[args.label_column] = labels
-        else:
-            grouped_data = [torch.cat([x, y]) for (x, y) in zip(images, conditioning_images)]
-            grouped_data = group_random_crop(grouped_data, args.resolution)
-
-            images = [x[:3, :, :] for x in grouped_data]
-            conditioning_images = [x[3:, :, :] for x in grouped_data]
-
-        # Dropout some of features for classifier-free guidance.
-        for i, img_condition in enumerate(conditioning_images):
-            rand_num = random.random()
-            if rand_num < args.image_condition_dropout:
-                conditioning_images[i] = torch.zeros_like(img_condition)
-            elif rand_num < args.image_condition_dropout + args.text_condition_dropout:
-                examples[caption_column][i] = ""
-            elif rand_num < args.image_condition_dropout + args.text_condition_dropout + args.all_condition_dropout:
-                conditioning_images[i] = torch.zeros_like(img_condition)
-                examples[caption_column][i] = ""
-
-        examples["pixel_values"] = images
-        if identity_embeddings is not None:
-            examples["identity_embeddings"] = identity_embeddings
-        else:
-            examples["conditioning_pixel_values"] = conditioning_images
-        examples["input_ids"] = tokenize_captions(examples)
-
-        return examples
-
+        # Load images normally
+        images = [Image.open(img).convert("RGB") for img in examples["image_file"]]
+        images = [image_transforms(img) for img in images]
+        
+        # Load identity embeddings
+        conditions = [np.load(cond) for cond in examples["condition_file"]]
+        conditions = [torch.from_numpy(cond).float() for cond in conditions]
+        
+        return {
+            "pixel_values": images,
+            "conditioning_pixel_values": conditions,  # Will be renamed later
+            "input_ids": tokenize_captions(examples),
+        }
+    
     with accelerator.main_process_first():
         if args.max_train_samples is not None:
             dataset["train"] = dataset["train"].shuffle(seed=args.seed)
@@ -1100,26 +840,21 @@ def make_train_dataset(args, tokenizer, accelerator, split='train'):
 def collate_fn(examples):
     pixel_values = torch.stack([example["pixel_values"] for example in examples])
     pixel_values = pixel_values.to(memory_format=torch.contiguous_format).float()
-
-    if "identity_embeddings" in examples[0]:
-        conditioning_values = torch.stack([example["identity_embeddings"] for example in examples])
-    else:
-        conditioning_values = torch.stack([example["conditioning_pixel_values"] for example in examples])
-    conditioning_values = conditioning_values.to(memory_format=torch.contiguous_format).float()
-
+    
+    identity_embeddings = torch.stack([example["identity_embedding"] for example in examples])
+    
     input_ids = torch.stack([example["input_ids"] for example in examples])
-
-    if args.label_column is not None:
-        labels = torch.stack([example[args.label_column] for example in examples])
-        labels = labels.to(memory_format=torch.contiguous_format).float()
-    else:
-        labels = conditioning_pixel_values
-
+    
+    masks = None
+    if "mask" in examples[0] and examples[0]["mask"] is not None:
+        masks = torch.stack([example["mask"] for example in examples])
+        masks = masks.to(memory_format=torch.contiguous_format).float()
+    
     return {
         "pixel_values": pixel_values,
-        "conditioning_pixel_values": conditioning_pixel_values,
+        "identity_embedding": identity_embeddings, 
         "input_ids": input_ids,
-        "labels": labels,
+        "mask": masks,  
     }
 
 
@@ -1451,34 +1186,7 @@ def main(args):
         for step, batch in enumerate(train_dataloader):
             with accelerator.accumulate(controlnet):
                 encoder_hidden_states = text_encoder(batch["input_ids"])[0]  # text condition
-                conditioning_values = batch["conditioning_values"].to(dtype=weight_dtype)  # image condition
-
-                # This step is necessary. It took us a long time to find out this issue
-                if args.conditioning_type == "identity":
-                    controlnet_condition = conditioning_values
-                    labels = conditioning_values 
-                # The input of the canny/hed/lineart model does not require normalization of the image
-                elif args.conditioning_image_column == "canny":
-                    low_threshold = 0.1 # low_threshold = random.uniform(0, 1)
-                    high_threshold = 0.2 # high_threshold = random.uniform(low_threshold, 1)
-                    with torch.no_grad():
-                        # mean & std used in image transformations
-                        mean = torch.tensor([0.5, 0.5, 0.5]).view(1, -1, 1, 1).to(accelerator.device)
-                        std = torch.tensor([0.5, 0.5, 0.5]).view(1, -1, 1, 1).to(accelerator.device)
-                        # magnitude, edge
-                        denormalized_condition_image = controlnet_image * std + mean
-                        labels, controlnet_image = reward_model(denormalized_condition_image, low_threshold, high_threshold)
-                        controlnet_image = controlnet_image.expand(-1, 3, -1, -1)  # (B, 3, H, W)
-                elif args.conditioning_image_column in ['lineart', 'hed']:
-                    with torch.no_grad():
-                        # mean & std used in image transformations
-                        mean = torch.tensor([0.5, 0.5, 0.5]).view(1, -1, 1, 1).to(accelerator.device)
-                        std = torch.tensor([0.5, 0.5, 0.5]).view(1, -1, 1, 1).to(accelerator.device)
-                        denormalized_condition_image = controlnet_image * std + mean
-                        labels = reward_model(denormalized_condition_image.to(weight_dtype))
-                        controlnet_image = labels.expand(-1, 3, -1, -1)  # (B, 3, H, W)
-                        controlnet_image = 1 - controlnet_image if args.task_name == 'lineart' else controlnet_image
-
+                controlnet_image = batch["conditioning_pixel_values"].to(dtype=weight_dtype)  # image condition
                 """
                 Training ControlNet
                 """
@@ -1496,43 +1204,24 @@ def main(args):
                 # (this is the forward diffusion process)
                 noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
-                if args.controlnet_architecture == "upsample":
-                    up_block_res_samples, _ = controlnet(
-                        noisy_latents,
-                        timesteps,
-                        encoder_hidden_states=encoder_hidden_states,
-                        identity_embeddings=controlnet_condition,  # Your custom argument
-                        return_dict=False,
-                    )
-                    
-                    # Need to modify UNet forward pass to use up_block_res_samples
-                    model_pred = unet(
-                        noisy_latents,
-                        timesteps,
-                        encoder_hidden_states=encoder_hidden_states,
-                        up_block_additional_residuals=[  # Using upsample residuals instead
-                            sample.to(dtype=weight_dtype) for sample in up_block_res_samples
-                        ],
-                    ).sample
-                else:
-                    down_block_res_samples, mid_block_res_sample = controlnet(
-                        noisy_latents,
-                        timesteps,
-                        encoder_hidden_states=encoder_hidden_states,
-                        controlnet_cond=controlnet_image,
-                        return_dict=False,
-                    )
-    
-                    # Predict the noise residual
-                    model_pred = unet(
-                        noisy_latents,
-                        timesteps,
-                        encoder_hidden_states=encoder_hidden_states,
-                        down_block_additional_residuals=[
-                            sample.to(dtype=weight_dtype) for sample in down_block_res_samples
-                        ],
-                        mid_block_additional_residual=mid_block_res_sample.to(dtype=weight_dtype),
-                    ).sample
+                down_block_res_samples, mid_block_res_sample = controlnet(
+                    noisy_latents,
+                    timesteps,
+                    encoder_hidden_states=encoder_hidden_states,
+                    controlnet_cond=controlnet_image,
+                    return_dict=False,
+                )
+
+                # Predict the noise residual
+                model_pred = unet(
+                    noisy_latents,
+                    timesteps,
+                    encoder_hidden_states=encoder_hidden_states,
+                    down_block_additional_residuals=[
+                        sample.to(dtype=weight_dtype) for sample in down_block_res_samples
+                    ],
+                    mid_block_additional_residual=mid_block_res_sample.to(dtype=weight_dtype),
+                ).sample
 
                 # Get the target for loss depending on the prediction type
                 if noise_scheduler.config.prediction_type == "epsilon":
@@ -1553,65 +1242,46 @@ def main(args):
                         for (noise, t, noisy_latent) in zip(model_pred, timesteps, noisy_latents)
                 ]
                 pred_original_sample = torch.stack(pred_original_sample)
-                
+
                 # Map the denoised latents into RGB images
                 pred_original_sample = 1 / vae.config.scaling_factor * pred_original_sample
                 image = vae.decode(pred_original_sample.to(weight_dtype)).sample
                 image = (image / 2 + 0.5).clamp(0, 1)
-                
-                if args.task_name == 'identity':
-                    with torch.no_grad():
-                        normalized_image = normalize(image, (0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
-                        # Resize to ARCFACE expected input size (assuming 112x112)
-                        normalized_image = torchvision.transforms.functional.resize(normalized_image, (112, 112))
-                        
-                        # Extract identity embeddings from generated image
-                        generated_embeddings = reward_model(normalized_image.to(accelerator.device))
-                        # Get original identity embeddings from batch
-                        original_embeddings = batch["identity_embeddings"].to(accelerator.device)
-                        
-                        reward_loss = 1 - F.cosine_similarity(generated_embeddings, original_embeddings)
-                        outputs = generated_embeddings
-                        labels = original_embeddings
-                        
+
+                # image normalization, depends on different reward models
+                # This step is necessary. It took us a long time to find out this issue
+                if args.task_name == 'depth':
+                    image = torchvision.transforms.functional.resize(image, (384, 384))
+                    image = normalize(image, (0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+                elif args.task_name in ['canny', 'lineart', 'hed']:
+                    pass
                 else:
-                    # image normalization, depends on different reward models
-                    if args.task_name == 'depth':
-                        image = torchvision.transforms.functional.resize(image, (384, 384))
-                        image = normalize(image, (0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
-                    elif args.task_name in ['canny', 'lineart', 'hed']:
-                        pass
-                    else:
-                        image = normalize(image, (0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
-                
-                    # reward model inference
-                    if args.task_name == 'canny':
-                        outputs = reward_model(image.to(accelerator.device), low_threshold, high_threshold)
-                    else:
-                        outputs = reward_model(image.to(accelerator.device))
-                
-                    # normalize the predicted depth to (0, 1]
-                    if type(outputs) == transformers.modeling_outputs.DepthEstimatorOutput:
-                        # map predicted depth into [0, 1]
-                        outputs = outputs.predicted_depth
-                        outputs = torchvision.transforms.functional.resize(outputs, (args.resolution, args.resolution), interpolation=transforms.InterpolationMode.BILINEAR)
-                        max_values = outputs.view(args.train_batch_size, -1).amax(dim=1, keepdim=True).view(args.train_batch_size, 1, 1)
-                        outputs = outputs / max_values
-                
-                        # map label into [0, 1]
-                        labels = batch["labels"].mean(dim=1)  # (N, 3, H, W) -> (N, H, W)
-                        max_values = labels.view(labels.size(0), -1).max(dim=1)[0]
-                        labels = labels / max_values.view(-1, 1, 1)
-                
-                    # kornia.filters.canny return a tuple with (magnitude, edge)
-                    elif args.task_name == 'canny':
-                        outputs = outputs[0]   # (B, 1, H, W)
-                    elif args.task_name in ['lineart', 'hed']:
-                        pass
-                    else:
-                        labels = batch["labels"]
-                
+                    image = normalize(image, (0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+
+                # reward model inference
+                if args.task_name == 'canny':
+                    outputs = reward_model(image.to(accelerator.device), low_threshold, high_threshold)
+                else:
+                    outputs = reward_model(image.to(accelerator.device))
+
+                # normalize the predicted depth to (0, 1]
+                if type(outputs) == transformers.modeling_outputs.DepthEstimatorOutput:
+
+                    # map predicted depth into [0, 1]
+                    outputs = outputs.predicted_depth
+                    outputs = torchvision.transforms.functional.resize(outputs, (args.resolution, args.resolution), interpolation=transforms.InterpolationMode.BILINEAR)
+                    max_values = outputs.view(args.train_batch_size, -1).amax(dim=1, keepdim=True).view(args.train_batch_size, 1, 1)
+                    outputs = outputs / max_values
+
+                    # map label into [0, 1]
+                    labels = batch["labels"].mean(dim=1)  # (N, 3, H, W) -> (N, H, W)
+                    max_values = labels.view(labels.size(0), -1).max(dim=1)[0]
+                    labels = labels / max_values.view(-1, 1, 1)
+
+                labels = batch["labels"]
+
                 # Avoid nan loss when using FP16 (happen in softmax)
+                # FP32 and BF16 both work well
                 if image.dtype == torch.float16:
                     if isinstance(outputs, torch.Tensor):
                         outputs = outputs.to(torch.float32)
@@ -1621,43 +1291,32 @@ def main(args):
                         labels = [x.to(torch.float32) for x in labels]
                     else:
                         raise NotImplementedError
+
+                # For depth and segmentation, we resize the label to the size of model output
                 
-                # For identity task, we don't need to transform labels
-                if args.task_name != 'identity':
-                    # For depth and segmentation, we resize the label to the size of model output
-                    if args.task_name == 'segmentation':
-                        labels = label_transform(labels, args.task_name, args.dataset_name, output_size=outputs.shape[-2:])
-                    elif args.task_name in ['depth', 'canny', 'lineart', 'hed']:
-                        labels = label_transform(labels, args.task_name, args.dataset_name)
-                    else:
-                        raise NotImplementedError(f"Not support task: {args.task_name}.")
+                labels = label_transform(labels, args.task_name, args.dataset_name)
                 
                 labels = [x.to(accelerator.device) for x in labels] if isinstance(labels, list) else labels.to(accelerator.device)
-                
+
                 # Determine which samples in the current batch need to calculate reward loss
                 timestep_mask = (args.min_timestep_rewarding <= timesteps.reshape(-1, 1)) & (timesteps.reshape(-1, 1) <= args.max_timestep_rewarding)
-                
+
                 # calculate the reward loss
-                if args.task_name == 'identity':
-                    # For identity, we already computed the loss directly
+                reward_loss = get_reward_loss(outputs, labels, args.task_name, reduction='none')
+
+                # Reawrd Loss: (B, H, W)  =>  (B)
+                if args.task_name == 'segmentation':
+                    # remove background class for the segmentation task
+                    background_mask = (labels != 255).float()
+                    reward_loss = (background_mask * reward_loss).sum(dim=(-1,-2)) / (background_mask.sum(dim=(-1,-2)) + 1e-10)
+                elif args.task_name == 'canny':
                     pass
                 else:
-                    reward_loss = get_reward_loss(outputs, labels, args.task_name, reduction='none')
-                
-                    # Reward Loss: (B, H, W)  =>  (B)
-                    if args.task_name == 'segmentation':
-                        # remove background class for the segmentation task
-                        background_mask = (labels != 255).float()
-                        reward_loss = (background_mask * reward_loss).sum(dim=(-1,-2)) / (background_mask.sum(dim=(-1,-2)) + 1e-10)
-                    elif args.task_name == 'canny':
-                        pass
-                    else:
-                        reward_loss = reward_loss.mean(dim=(-1,-2))
-                
-                    reward_loss = reward_loss.reshape_as(timestep_mask)
-                    reward_loss = (timestep_mask * reward_loss).sum() / (timestep_mask.sum() + 1e-10)
-                    
-                    loss = pretrain_loss + reward_loss * args.grad_scale
+                    reward_loss = reward_loss.mean(dim=(-1,-2))
+
+                reward_loss = reward_loss.reshape_as(timestep_mask)
+                reward_loss = (timestep_mask * reward_loss).sum() / (timestep_mask.sum() + 1e-10)
+                loss = pretrain_loss + reward_loss * args.grad_scale
 
                 """
                 Losses

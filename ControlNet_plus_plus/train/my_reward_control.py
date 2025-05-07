@@ -160,7 +160,7 @@ def log_validation(
 
     if args.task_name == 'identity':
         # Get identity embeddings from validation set
-        validation_embeddings = [item["identity_embedding"] for item in val_dataset]
+        validation_embeddings = [torch.from_numpy(np.load(f)) for f in val_dataset[args.conditioning_image_column]]
         validation_embeddings = torch.stack(validation_embeddings).to(accelerator.device)
     else:
         # Avoid some problems caused by grayscale images
@@ -195,19 +195,16 @@ def log_validation(
             validation_image = validation_image.convert('RGB').resize((512, 512), Image.Resampling.BICUBIC)
         
         if args.task_name == 'identity':
-            # For identity mode, we use the embedding as condition
             validation_embedding = validation_embeddings[i].unsqueeze(0)
             with torch.autocast("cuda"):
                 images = pipeline(
-                    [validation_prompt] * args.num_validation_images,
-                    identity_embeddings=[validation_embedding] * args.num_validation_images,
+                    [""] * len(validation_embeddings),
+                    identity_embeddings=validation_embeddings,
                     num_inference_steps=20,
                     generator=generator
                 ).images
             
-            # Calculate identity similarity
             with torch.no_grad():
-                # Preprocess generated images for ARCFACE
                 processed_images = torch.stack([
                     transforms.Compose([
                         transforms.ToTensor(),
@@ -274,8 +271,8 @@ def log_validation(
                 validation_embedding = validation_embeddings[idx].unsqueeze(0)
                 with torch.autocast("cuda"):
                     images = pipeline(
-                        [validation_prompt] * args.num_validation_images,
-                        identity_embeddings=[validation_embedding] * args.num_validation_images,
+                        [""] * len(validation_embeddings),
+                        identity_embeddings=validation_embeddings,
                         num_inference_steps=20,
                         generator=generator
                     ).images
@@ -983,6 +980,9 @@ def make_train_dataset(args, tokenizer, accelerator, split='train'):
                 f"`--conditioning_image_column` value '{args.conditioning_image_column}' not found in dataset columns. Dataset columns are: {', '.join(column_names)}"
             )
 
+    if args.task_name == 'identity':
+        args.conditioning_image_column = "identity_embedding"
+    
     def tokenize_captions(examples, is_train=True):
         captions = ["" for _ in examples[caption_column]] 
         # for caption in examples[caption_column]:
@@ -1029,13 +1029,15 @@ def make_train_dataset(args, tokenizer, accelerator, split='train'):
         pil_images = [image.convert("RGB") for image in examples[image_column]]
         images = [image_transforms(image) for image in pil_images]
 
-        if args.conditioning_type == "identity":
-            identity_embeddings = [torch.tensor(embedding) for embedding in examples["identity_embedding"]]
-            identity_embeddings = torch.stack(identity_embeddings)
+        if args.task_name == 'identity':
+            conditioning_data = [
+                torch.from_numpy(np.load(os.path.join(args.dataset_name, f))) 
+                for f in examples[args.conditioning_image_column]
+            ]
+            conditioning_data = torch.stack(conditioning_data)
         else:
             conditioning_images = [image.convert("RGB") for image in examples[conditioning_image_column]]
             conditioning_images = [conditioning_image_transforms(image) for image in conditioning_images]
-            identity_embeddings = None
 
         if args.label_column is not None:
             dtype = torch.long
@@ -1075,8 +1077,8 @@ def make_train_dataset(args, tokenizer, accelerator, split='train'):
                 examples[caption_column][i] = ""
 
         examples["pixel_values"] = images
-        if identity_embeddings is not None:
-            examples["identity_embeddings"] = identity_embeddings
+        if args.task_name == 'identity':
+            examples["conditioning_values"] = identity_embeddings
         else:
             examples["conditioning_pixel_values"] = conditioning_images
         examples["input_ids"] = tokenize_captions(examples)
@@ -1100,8 +1102,8 @@ def collate_fn(examples):
     pixel_values = torch.stack([example["pixel_values"] for example in examples])
     pixel_values = pixel_values.to(memory_format=torch.contiguous_format).float()
 
-    if "identity_embeddings" in examples[0]:
-        conditioning_values = torch.stack([example["identity_embeddings"] for example in examples])
+    if args.task_name == 'identity':
+        conditioning_values = torch.stack([example["conditioning_values"] for example in examples])
     else:
         conditioning_values = torch.stack([example["conditioning_pixel_values"] for example in examples])
     conditioning_values = conditioning_values.to(memory_format=torch.contiguous_format).float()
@@ -1238,7 +1240,10 @@ def main(args):
     vae.requires_grad_(False)
     unet.requires_grad_(False)
     text_encoder.requires_grad_(False)
-    reward_model.requires_grad_(False)
+    if args.task_name == 'identity':
+        pass
+    else:
+        reward_model.requires_grad_(False)
     controlnet.train()
 
     # Create EMA for the ControlNet.
@@ -1495,21 +1500,22 @@ def main(args):
                 # (this is the forward diffusion process)
                 noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
-                if args.controlnet_architecture == "upsample":
+                if args.task_name == 'identity':
+                    controlnet_condition = batch["conditioning_values"].to(dtype=weight_dtype)
+                    # Use your custom ControlNet architecture
                     up_block_res_samples, _ = controlnet(
                         noisy_latents,
                         timesteps,
                         encoder_hidden_states=encoder_hidden_states,
-                        identity_embeddings=controlnet_condition,  # Your custom argument
+                        identity_embeddings=controlnet_condition,
                         return_dict=False,
                     )
                     
-                    # Need to modify UNet forward pass to use up_block_res_samples
                     model_pred = unet(
                         noisy_latents,
                         timesteps,
                         encoder_hidden_states=encoder_hidden_states,
-                        up_block_additional_residuals=[  # Using upsample residuals instead
+                        up_block_additional_residuals=[
                             sample.to(dtype=weight_dtype) for sample in up_block_res_samples
                         ],
                     ).sample

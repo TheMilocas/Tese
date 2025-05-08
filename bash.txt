@@ -1,8 +1,8 @@
-python ControlNet_plus_plus/train/my_reward_control.py \
+accelerate launch ControlNet_plus_plus/train/my_reward_control.py \
+  --pretrained_model_name_or_path="stable-diffusion-v1-5/stable-diffusion-v1-5" \
   --dataset_name="datasets/celebahq/train" \
-  --validation_image_dir="datasets/celebahq/val" \
   --image_column="masked_image" \
-  --conditioning_image_column="embedding_masked" \ 
+  --conditioning_image_column="embedding_masked" \
   --caption_column="" \
   --task_name="identity" \
   --resolution=512 \
@@ -11,5 +11,4 @@ python ControlNet_plus_plus/train/my_reward_control.py \
   --grad_scale=0.5 \
   --validation_steps=500 \
   --output_dir="identity_controlnet" \
-  --reward_model_name_or_path="ARCFACE/models/glintr100.onnx" \
-  --pretrained_model_name_or_path="runwayml/stable-diffusion-v1-5"
+  --reward_model_name_or_path="ARCFACE/models/glintr100.onnx"

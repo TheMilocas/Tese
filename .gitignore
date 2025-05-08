@@ -34,6 +34,7 @@ __pycache__/
 # Large output folders
 ARCFACE/celebahq-idi
 ARCFACE/models
-trained_controlnet_inicial
+ControlNetFolder/controlnetinpaint/trained_controlnet_inicial
+ControlNetFolder/controlnetinpaint/zeroed_controlnet
 celebahq-idi
 datasets

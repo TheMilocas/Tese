@@ -6,7 +6,8 @@ import numpy as np
 
 #trained_controlnet_inicial/checkpoint-500/controlnet
 #lllyasviel/sd-controlnet-canny
-controlnet = ControlNetModel.from_pretrained("zeroed_controlnet", torch_dtype=torch.float16)
+
+controlnet = ControlNetModel.from_pretrained("zero_controlnet", torch_dtype=torch.float16)
 pipe = StableDiffusionControlNetInpaintPipeline.from_pretrained(
      "runwayml/stable-diffusion-inpainting", controlnet=controlnet, torch_dtype=torch.float16
  )
@@ -31,4 +32,4 @@ new_image = pipe(
     mask_image=mask_image
 ).images[0]
 
-new_image.save("./output.png")
+new_image.save("./output1.png")

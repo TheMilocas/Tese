@@ -36,5 +36,6 @@ ARCFACE/celebahq-idi
 ARCFACE/models
 ControlNetFolder/controlnetinpaint/trained_controlnet_inicial
 ControlNetFolder/controlnetinpaint/zeroed_controlnet
+ControlNetFolder/controlnetinpaint/zero_controlnet
 celebahq-idi
 datasets

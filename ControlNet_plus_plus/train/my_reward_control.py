@@ -1502,7 +1502,6 @@ def main(args):
 
                 if args.task_name == 'identity':
                     controlnet_condition = batch["conditioning_values"].to(dtype=weight_dtype)
-                    # Use your custom ControlNet architecture
                     up_block_res_samples, _ = controlnet(
                         noisy_latents,
                         timesteps,

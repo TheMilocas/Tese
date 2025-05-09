@@ -1,0 +1,187 @@
+_wandb:
+    value:
+        cli_version: 0.19.9
+        m: []
+        python_version: 3.11.11
+        t:
+            "1":
+                - 1
+                - 5
+                - 11
+                - 37
+                - 41
+                - 49
+                - 51
+                - 53
+                - 55
+                - 60
+                - 71
+                - 79
+                - 82
+                - 83
+            "2":
+                - 1
+                - 5
+                - 11
+                - 37
+                - 41
+                - 49
+                - 51
+                - 53
+                - 55
+                - 60
+                - 71
+                - 79
+                - 82
+                - 83
+            "3":
+                - 13
+                - 23
+                - 55
+            "4": 3.11.11
+            "5": 0.19.9
+            "6": 4.50.3
+            "8":
+                - 5
+            "12": 0.19.9
+            "13": linux-x86_64
+adam_beta1:
+    value: 0.9
+adam_beta2:
+    value: 0.999
+adam_epsilon:
+    value: 1e-08
+adam_weight_decay:
+    value: 0.01
+all_condition_dropout:
+    value: 0
+allow_tf32:
+    value: false
+cache_dir:
+    value: null
+caption_column:
+    value: ""
+checkpointing_steps:
+    value: 500
+checkpoints_total_limit:
+    value: null
+conditioning_image_column:
+    value: condition
+conditioning_type:
+    value: image
+control_guidance_end:
+    value: 1
+control_guidance_start:
+    value: 0
+controlnet_architecture:
+    value: original
+controlnet_conditioning_scale:
+    value: 1
+controlnet_model_name_or_path:
+    value: null
+dataloader_num_workers:
+    value: 16
+dataset_config_name:
+    value: null
+dataset_name:
+    value: Milocas/celebahq_masked
+enable_xformers_memory_efficient_attention:
+    value: false
+grad_scale:
+    value: 0.5
+gradient_accumulation_steps:
+    value: 1
+gradient_checkpointing:
+    value: false
+guidance_scale:
+    value: 1
+hub_model_id:
+    value: limingcv/reward_controlnet
+hub_token:
+    value: null
+image_column:
+    value: image
+image_condition_dropout:
+    value: 0
+keep_in_memory:
+    value: false
+label_column:
+    value: null
+learning_rate:
+    value: 5e-06
+logging_dir:
+    value: logs
+lr_num_cycles:
+    value: 1
+lr_power:
+    value: 1
+lr_scheduler:
+    value: constant
+lr_warmup_steps:
+    value: 500
+max_grad_norm:
+    value: 1
+max_timestep_rewarding:
+    value: 200
+max_train_samples:
+    value: null
+max_train_steps:
+    value: 295200
+max_val_samples:
+    value: 10
+min_timestep_rewarding:
+    value: 0
+mixed_precision:
+    value: null
+non_ema_revision:
+    value: null
+num_train_epochs:
+    value: 50
+num_validation_images:
+    value: 2
+output_dir:
+    value: identity_controlnet
+pretrained_model_name_or_path:
+    value: stable-diffusion-v1-5/stable-diffusion-v1-5
+push_to_hub:
+    value: false
+report_to:
+    value: wandb
+resolution:
+    value: 512
+resume_from_checkpoint:
+    value: null
+revision:
+    value: null
+reward_model_name_or_path:
+    value: ARCFACE/models/glintr100.onnx
+scale_lr:
+    value: false
+seed:
+    value: null
+set_grads_to_none:
+    value: false
+task_name:
+    value: identity
+text_condition_dropout:
+    value: 0
+timestep_sampling_end:
+    value: 1000
+timestep_sampling_start:
+    value: 0
+tokenizer_name:
+    value: null
+tracker_project_name:
+    value: reward_controlnet
+train_batch_size:
+    value: 4
+train_data_dir:
+    value: null
+use_8bit_adam:
+    value: false
+use_ema:
+    value: false
+validation_steps:
+    value: 500
+wrong_ids_file:
+    value: null

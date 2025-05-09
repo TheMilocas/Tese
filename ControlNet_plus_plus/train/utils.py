@@ -22,26 +22,70 @@ from mmseg.models.losses.silog_loss import silog_loss
 from torchvision.transforms import RandomCrop
 from torchvision import transforms
 
-
-class ARCFACE:
+class ARCFACE(nn.Module):
     def __init__(self, model_path):
+        super().__init__()
         self.sess = ort.InferenceSession(model_path)
+        
+        self.providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
+        self.sess.set_providers([p for p in self.providers if p in ort.get_available_providers()])
+        
         self.transform = transforms.Compose([
             transforms.Resize((112, 112)),
-            transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
+            transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
         ])
         
-    def __call__(self, images):
-        inputs = self.transform(images).numpy()
-        return torch.from_numpy(self.sess.run(None, {"input.1": inputs})[0])
+        self.register_buffer('dummy', torch.empty(0))
         
-def get_reward_model(task='segmentation', model_path='mmseg::upernet/upernet_r50_4xb4-160k_ade20k-512x512.py'):
+    @property
+    def device(self):
+        return self.dummy.device
+        
+    def forward(self, images):
+        """Process batch of images and return embeddings.
+        
+        Args:
+            images: torch.Tensor in shape [B, 3, H, W] in range [0, 1]
+            
+        Returns:
+            torch.Tensor: Embeddings in shape [B, 512]
+        """
+        inputs = self.transform(images)
+        
+        if 'CUDAExecutionProvider' in self.sess.get_providers():
+            io_binding = self.sess.io_binding()
+            inputs_gpu = inputs.contiguous().to(self.device)
+            
+            io_binding.bind_input(
+                name='input.1',
+                device_type='cuda',
+                device_id=0,
+                element_type=np.float32,
+                shape=inputs_gpu.shape,
+                buffer_ptr=inputs_gpu.data_ptr()
+            )
+            
+            output_shape = (inputs.size(0), 512)
+            outputs = torch.empty(output_shape, dtype=torch.float32, device=self.device)
+            io_binding.bind_output('output', device_type='cuda', device_id=0)
+            
+            self.sess.run_with_iobinding(io_binding)
+            
+            return outputs
+        else:
+            inputs_np = inputs.cpu().numpy()
+            outputs = self.sess.run(None, {'input.1': inputs_np})[0]
+            return torch.from_numpy(outputs).to(self.device)
+
+def get_reward_model(task='identity', model_path=None):
     """Return reward model for different tasks.
-
+    
     Args:
-        task (str, optional): Task name. Defaults to 'segmentation'.
-        model_path (str, optional): Model name or pre-trained path.
-
+        task (str): Task name ('segmentation', 'canny', 'depth', 'lineart', 'hed', 'identity')
+        model_path (str): Path to model weights or config
+        
+    Returns:
+        nn.Module: Reward model for specified task
     """
     if task == 'segmentation':
         return get_model(model_path, pretrained=True)
@@ -51,15 +95,16 @@ def get_reward_model(task='segmentation', model_path='mmseg::upernet/upernet_r50
         return DPTForDepthEstimation.from_pretrained(model_path)
     elif task == 'lineart':
         model = LineDrawingModel()
-        model.load_state_dict(torch.hub.load_state_dict_from_url(model_path, map_location=torch.device('cpu')))
+        model.load_state_dict(torch.hub.load_state_dict_from_url(model_path, map_location='cpu'))
         return model
     elif task == 'hed':
         return HEDdetector(model_path)
     elif task == 'identity':
+        if model_path is None:
+            raise ValueError("Model path must be specified for identity task")
         return ARCFACE(model_path)
     else:
-        raise not NotImplementedError("Only support segmentation, canny and depth for now.")
-
+        raise NotImplementedError(f"Task {task} not supported")
 
 def get_reward_loss(predictions, labels, task='segmentation', **args):
     """Return reward loss for different tasks.

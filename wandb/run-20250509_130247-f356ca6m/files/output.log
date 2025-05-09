@@ -1,0 +1,38 @@
+05/09/2025 13:02:48 - INFO - __main__ - ***** Running training *****
+05/09/2025 13:02:48 - INFO - __main__ -   Num examples = 23616
+05/09/2025 13:02:48 - INFO - __main__ -   Num batches each epoch = 5904
+05/09/2025 13:02:48 - INFO - __main__ -   Num Epochs = 50
+05/09/2025 13:02:48 - INFO - __main__ -   Instantaneous batch size per device = 4
+05/09/2025 13:02:48 - INFO - __main__ -   Total train batch size (w. parallel, distributed & accumulation) = 4
+05/09/2025 13:02:48 - INFO - __main__ -   Gradient Accumulation steps = 1
+05/09/2025 13:02:48 - INFO - __main__ -   Total optimization steps = 295200
+Steps:   0%|                                                            | 0/295200 [00:00<?, ?it/s]Traceback (most recent call last):
+  File "/home/csantiago/ControlNet_plus_plus/train/my_reward_control.py", line 1898, in <module>
+    main(args)
+  File "/home/csantiago/ControlNet_plus_plus/train/my_reward_control.py", line 1519, in main
+    for step, batch in enumerate(train_dataloader):
+  File "/home/csantiago/.conda/envs/py311n/lib/python3.11/site-packages/accelerate/data_loader.py", line 566, in __iter__
+    current_batch = next(dataloader_iter)
+                    ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/csantiago/.conda/envs/py311n/lib/python3.11/site-packages/torch/utils/data/dataloader.py", line 701, in __next__
+    data = self._next_data()
+           ^^^^^^^^^^^^^^^^^
+  File "/home/csantiago/.conda/envs/py311n/lib/python3.11/site-packages/torch/utils/data/dataloader.py", line 1465, in _next_data
+    return self._process_data(data)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/csantiago/.conda/envs/py311n/lib/python3.11/site-packages/torch/utils/data/dataloader.py", line 1491, in _process_data
+    data.reraise()
+  File "/home/csantiago/.conda/envs/py311n/lib/python3.11/site-packages/torch/_utils.py", line 715, in reraise
+    raise exception
+TypeError: Caught TypeError in DataLoader worker process 0.
+Original Traceback (most recent call last):
+  File "/home/csantiago/.conda/envs/py311n/lib/python3.11/site-packages/torch/utils/data/_utils/worker.py", line 351, in _worker_loop
+    data = fetcher.fetch(index)  # type: ignore[possibly-undefined]
+           ^^^^^^^^^^^^^^^^^^^^
+  File "/home/csantiago/.conda/envs/py311n/lib/python3.11/site-packages/torch/utils/data/_utils/fetch.py", line 55, in fetch
+    return self.collate_fn(data)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/csantiago/ControlNet_plus_plus/train/my_reward_control.py", line 1154, in collate_fn
+    pixel_values = torch.stack([example["pixel_values"] for example in examples])
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: expected Tensor as element 0 in argument 0, but got list

@@ -1,0 +1,63 @@
+{
+  "os": "Linux-5.15.0-138-generic-x86_64-with-glibc2.35",
+  "python": "CPython 3.11.11",
+  "startedAt": "2025-05-09T13:02:47.109833Z",
+  "args": [
+    "--pretrained_model_name_or_path=stable-diffusion-v1-5/stable-diffusion-v1-5",
+    "--dataset_name=Milocas/celebahq_masked",
+    "--image_column=image",
+    "--conditioning_image_column=condition",
+    "--caption_column=",
+    "--task_name=identity",
+    "--resolution=512",
+    "--train_batch_size=4",
+    "--num_train_epochs=50",
+    "--grad_scale=0.5",
+    "--validation_steps=500",
+    "--output_dir=identity_controlnet",
+    "--reward_model_name_or_path=ARCFACE/models/glintr100.onnx"
+  ],
+  "program": "/home/csantiago/ControlNet_plus_plus/train/my_reward_control.py",
+  "codePath": "ControlNet_plus_plus/train/my_reward_control.py",
+  "git": {
+    "remote": "https://github.com/TheMilocas/Tese.git",
+    "commit": "8caef7e5e5462356bcf5a5f2f036495fb65da874"
+  },
+  "email": "cyberjoker2001@gmail.com",
+  "root": "/home/csantiago",
+  "host": "c34ab63e4b12",
+  "executable": "/home/csantiago/.conda/envs/py311n/bin/python3.11",
+  "codePathLocal": "ControlNet_plus_plus/train/my_reward_control.py",
+  "cpu_count": 48,
+  "cpu_count_logical": 96,
+  "gpu": "NVIDIA RTX A6000",
+  "gpu_count": 2,
+  "disk": {
+    "/": {
+      "total": "501342355456",
+      "used": "384307912704"
+    }
+  },
+  "memory": {
+    "total": "404275286016"
+  },
+  "cpu": {
+    "count": 48,
+    "countLogical": 96
+  },
+  "gpu_nvidia": [
+    {
+      "name": "NVIDIA RTX A6000",
+      "memoryTotal": "51527024640",
+      "cudaCores": 10752,
+      "architecture": "Ampere"
+    },
+    {
+      "name": "NVIDIA RTX A6000",
+      "memoryTotal": "51527024640",
+      "cudaCores": 10752,
+      "architecture": "Ampere"
+    }
+  ],
+  "cudaVersion": "12.9"
+}

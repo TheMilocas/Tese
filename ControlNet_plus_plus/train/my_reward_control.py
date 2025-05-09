@@ -361,7 +361,7 @@ def log_validation(
                 avg_similarity = sum(identity_similarities) / len(identity_similarities)
                 tracker.log({
                     "validation/avg_identity_similarity": avg_similarity,
-                    "validation/identity_similarities": wandb.Histogram(identity_similarities)
+                    #"validation/identity_similarities": wandb.Histogram(identity_similarities)
                 })
         else:
             logger.warn(f"image logging not implemented for {tracker.name}")

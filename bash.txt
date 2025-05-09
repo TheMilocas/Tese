@@ -1,8 +1,8 @@
 accelerate launch ControlNet_plus_plus/train/my_reward_control.py \
   --pretrained_model_name_or_path="stable-diffusion-v1-5/stable-diffusion-v1-5" \
-  --dataset_name="datasets/celebahq/train" \
-  --image_column="masked_image" \
-  --conditioning_image_column="embedding_masked" \
+  --dataset_name="Milocas/celebahq_masked" \
+  --image_column="image" \
+  --conditioning_image_column="condition" \
   --caption_column="" \
   --task_name="identity" \
   --resolution=512 \

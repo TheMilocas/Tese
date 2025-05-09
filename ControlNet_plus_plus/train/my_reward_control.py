@@ -159,8 +159,10 @@ def log_validation(
             validation_conditions = [item[conditioning_image_column] for item in val_dataset]
 
     if args.task_name == 'identity':
-        # Get identity embeddings from validation set
-        validation_embeddings = [torch.from_numpy(np.load(f)) for f in val_dataset[args.conditioning_image_column]]
+        validation_embeddings = []
+        for rel_path in val_dataset[args.conditioning_image_column]:
+            abs_path = os.path.join(args.local_embedding_dir, rel_path)
+            validation_embeddings.append(torch.from_numpy(np.load(abs_path)))
         validation_embeddings = torch.stack(validation_embeddings).to(accelerator.device)
     else:
         # Avoid some problems caused by grayscale images
@@ -897,231 +899,293 @@ def parse_args(input_args=None):
 
     return args
 
-
 def make_train_dataset(args, tokenizer, accelerator, split='train'):
-    # Get the datasets: you can either provide your own training and evaluation files (see below)
-    # or specify a Dataset from the hub (the dataset will be downloaded automatically from the datasets Hub).
 
-    # In distributed training, the load_dataset function guarantees that only one local process can concurrently
-    # download the dataset.
-    if args.dataset_name is not None:
-        # dataset = load_dataset(
-        #     args.dataset_name,
-        #     args.dataset_config_name,
-        #     cache_dir=args.cache_dir,
-        #     keep_in_memory=args.keep_in_memory,
-        # )
-        if args.dataset_name.count('/') == 1:
-            # Downloading and loading a dataset from the hub.
-            dataset = load_dataset(
-                args.dataset_name,
-                args.dataset_config_name,
-                cache_dir=args.cache_dir,
-                keep_in_memory=args.keep_in_memory,
-            )
-        else:
-            dataset = load_from_disk(
-                dataset_path=args.dataset_name,
-                keep_in_memory=args.keep_in_memory,
-            )
-    else:
-        if args.train_data_dir is not None:
-            dataset = load_dataset(
-                args.train_data_dir,
-                cache_dir=args.cache_dir,
-                keep_in_memory=args.keep_in_memory,
-            )
-        # See more about loading custom images at
-        # https://huggingface.co/docs/datasets/v2.0.0/en/dataset_script
+    dataset = load_dataset(args.dataset_name, keep_in_memory=args.keep_in_memory)
 
-    # filter wrong files for MultiGen
-    if args.wrong_ids_file is not None:
-        all_idx = [i for i in range(len(dataset['train']))]
-        exclude_idx = pickle.load(open(args.wrong_ids_file, 'rb'))
-        correct_idx = [item for item in all_idx if item not in exclude_idx]
-        dataset['train'] = dataset['train'].select(correct_idx)
-        print(f"filtering {len(exclude_idx)} rows")
+    required_columns = {args.image_column, args.conditioning_image_column}
+    missing_columns = required_columns - set(dataset['train'].column_names)
+    if missing_columns:
+        raise ValueError(f"Dataset missing required columns: {missing_columns}")
 
-    # Preprocessing the datasets.
-    # We need to tokenize inputs and targets.
-    column_names = dataset[split].column_names
-
-    # 6. Get the column names for input/target.
-    if args.image_column is None:
-        image_column = column_names[0]
-        logger.info(f"image column defaulting to {image_column}")
-    else:
-        image_column = args.image_column
-        if image_column not in column_names:
-            raise ValueError(
-                f"`--image_column` value '{args.image_column}' not found in dataset columns. Dataset columns are: {', '.join(column_names)}"
-            )
-
-    if args.caption_column is None:
-        caption_column = column_names[1]
-        logger.info(f"caption column defaulting to {caption_column}")
-    else:
-        caption_column = args.caption_column
-        if caption_column not in column_names:
-            raise ValueError(
-                f"`--caption_column` value '{args.caption_column}' not found in dataset columns. Dataset columns are: {', '.join(column_names)}"
-            )
-
-    if args.conditioning_image_column is None:
-        conditioning_image_column = column_names[2]
-        logger.info(f"conditioning image column defaulting to {conditioning_image_column}")
-    elif args.conditioning_image_column in ['canny', 'lineart', 'hed']:
-        conditioning_image_column = image_column
-        logger.info(f"conditioning image column defaulting to {conditioning_image_column}")
-    else:
-        conditioning_image_column = args.conditioning_image_column
-        if conditioning_image_column not in column_names:
-            raise ValueError(
-                f"`--conditioning_image_column` value '{args.conditioning_image_column}' not found in dataset columns. Dataset columns are: {', '.join(column_names)}"
-            )
-
-    if args.task_name == 'identity':
-        args.conditioning_image_column = "identity_embedding"
-    
-    def tokenize_captions(examples, is_train=True):
-        captions = ["" for _ in examples[caption_column]] 
-        # for caption in examples[caption_column]:
-        #     if isinstance(caption, str):
-        #         captions.append(caption)
-        #     elif isinstance(caption, (list, np.ndarray)):
-        #         # take a random caption if there are multiple
-        #         captions.append(random.choice(caption) if is_train else caption[0])
-        #     else:
-        #         raise ValueError(
-        #             f"Caption column `{caption_column}` should contain either strings or lists of strings."
-        #         )
-        inputs = tokenizer(
-            captions, max_length=tokenizer.model_max_length, padding="max_length", truncation=True, return_tensors="pt"
-        )
-        return inputs.input_ids
-
-    resolution = (args.resolution, args.resolution)
-    image_transforms = transforms.Compose(
-        [
-            transforms.Resize(resolution, interpolation=transforms.InterpolationMode.BICUBIC, antialias=True),
-            # transforms.CenterCrop(args.resolution),
-            transforms.ToTensor(),
-            transforms.Normalize([0.5], [0.5]),
-        ]
-    )
-
-    conditioning_image_transforms = transforms.Compose(
-        [
-            transforms.Resize(resolution, interpolation=transforms.InterpolationMode.BICUBIC, antialias=True),
-            # transforms.CenterCrop(args.resolution),
-            transforms.ToTensor(),
-        ]
-    )
-
-    label_image_transforms = transforms.Compose(
-        [
-            transforms.Resize(resolution, interpolation=transforms.InterpolationMode.NEAREST, antialias=True),
-            # transforms.CenterCrop(args.resolution),
-        ]
-    )
+    image_transforms = transforms.Compose([
+        transforms.Resize(args.resolution, interpolation=BICUBIC),
+        transforms.ToTensor(),
+        transforms.Normalize([0.5], [0.5]),
+    ])
 
     def preprocess_train(examples):
-        pil_images = [image.convert("RGB") for image in examples[image_column]]
-        images = [image_transforms(image) for image in pil_images]
 
-        if args.task_name == 'identity':
-            conditioning_data = [
-                torch.from_numpy(np.load(os.path.join(args.dataset_name, f))) 
-                for f in examples[args.conditioning_image_column]
-            ]
-            conditioning_data = torch.stack(conditioning_data)
-        else:
-            conditioning_images = [image.convert("RGB") for image in examples[conditioning_image_column]]
-            conditioning_images = [conditioning_image_transforms(image) for image in conditioning_images]
-
-        if args.label_column is not None:
-            dtype = torch.long
-            labels = [torch.tensor(np.asarray(label), dtype=dtype).unsqueeze(0) for label in examples[args.label_column]]
-            labels = [label_image_transforms(label) for label in labels]
-
-        # perform groupped random crop for image/conditioning_image/label
-        if args.label_column is not None:
-            grouped_data = [torch.cat([x, y, z]) for (x, y, z) in zip(images, conditioning_images, labels)]
-            grouped_data = group_random_crop(grouped_data, args.resolution)
-
-            images = [x[:3, :, :] for x in grouped_data]
-            conditioning_images = [x[3:6, :, :] for x in grouped_data]
-            labels = [x[6:, :, :] for x in grouped_data]
-
-            # (1, H, W) => (H, w)
-            if args.task_name == "segmentation":
-                labels = [label.squeeze(0) for label in labels]
-
-            examples[args.label_column] = labels
-        else:
-            grouped_data = [torch.cat([x, y]) for (x, y) in zip(images, conditioning_images)]
-            grouped_data = group_random_crop(grouped_data, args.resolution)
-
-            images = [x[:3, :, :] for x in grouped_data]
-            conditioning_images = [x[3:, :, :] for x in grouped_data]
-
-        # Dropout some of features for classifier-free guidance.
-        for i, img_condition in enumerate(conditioning_images):
-            rand_num = random.random()
-            if rand_num < args.image_condition_dropout:
-                conditioning_images[i] = torch.zeros_like(img_condition)
-            elif rand_num < args.image_condition_dropout + args.text_condition_dropout:
-                examples[caption_column][i] = ""
-            elif rand_num < args.image_condition_dropout + args.text_condition_dropout + args.all_condition_dropout:
-                conditioning_images[i] = torch.zeros_like(img_condition)
-                examples[caption_column][i] = ""
-
+        images = [image.convert("RGB") for image in examples[args.image_column]]
+        images = [image_transforms(image) for image in images]
+    
+        # Process embeddings - assuming examples[args.conditioning_image_column] contains full paths
+        embeddings = []
+        for abs_path in examples[args.conditioning_image_column]:  # Now using absolute paths
+            if not os.path.exists(abs_path):
+                raise FileNotFoundError(f"Embedding file not found: {abs_path}")
+            embeddings.append(torch.from_numpy(np.load(abs_path)))
+        
         examples["pixel_values"] = images
-        if args.task_name == 'identity':
-            examples["conditioning_values"] = identity_embeddings
-        else:
-            examples["conditioning_pixel_values"] = conditioning_images
-        examples["input_ids"] = tokenize_captions(examples)
-
+        examples["conditioning_values"] = embeddings
+        examples["input_ids"] = tokenizer([""]*len(images), 
+                                        padding="max_length", 
+                                        truncation=True, 
+                                        return_tensors="pt").input_ids
         return examples
 
     with accelerator.main_process_first():
-        if args.max_train_samples is not None:
-            dataset["train"] = dataset["train"].shuffle(seed=args.seed)
-            # rewrite the shuffled dataset on disk as contiguous chunks of data
-            dataset["train"] = dataset["train"].flatten_indices()
-            dataset["train"] = dataset["train"].select(range(args.max_train_samples))
+        train_dataset = dataset['train'].map(
+            preprocess_train,
+            batched=True,
+            remove_columns=dataset['train'].column_names
+        )
 
-        # Set the training transforms
-        train_dataset = dataset["train"].with_transform(preprocess_train)
+        if 'validation' in dataset:
+            val_dataset = dataset['validation']
+        elif 'test' in dataset:
+            val_dataset = dataset['test']
+        else:
+            dataset = dataset['train'].train_test_split(test_size=0.1)
+            val_dataset = dataset['test']
 
     return dataset, train_dataset
+    
+# def make_train_dataset(args, tokenizer, accelerator, split='train'):
+#     # Get the datasets: you can either provide your own training and evaluation files (see below)
+#     # or specify a Dataset from the hub (the dataset will be downloaded automatically from the datasets Hub).
 
+#     # In distributed training, the load_dataset function guarantees that only one local process can concurrently
+#     # download the dataset.
+#     if args.dataset_name is not None:
+#         # dataset = load_dataset(
+#         #     args.dataset_name,
+#         #     args.dataset_config_name,
+#         #     cache_dir=args.cache_dir,
+#         #     keep_in_memory=args.keep_in_memory,
+#         # )
+#         if args.dataset_name.count('/') == 1:
+#             # Downloading and loading a dataset from the hub.
+#             dataset = load_dataset(
+#                 args.dataset_name,
+#                 args.dataset_config_name,
+#                 cache_dir=args.cache_dir,
+#                 keep_in_memory=args.keep_in_memory,
+#             )
+#         else:
+#             dataset = load_from_disk(
+#                 dataset_path=args.dataset_name,
+#                 keep_in_memory=args.keep_in_memory,
+#             )
+#     else:
+#         if args.train_data_dir is not None:
+#             dataset = load_dataset(
+#                 args.train_data_dir,
+#                 cache_dir=args.cache_dir,
+#                 keep_in_memory=args.keep_in_memory,
+#             )
+#         # See more about loading custom images at
+#         # https://huggingface.co/docs/datasets/v2.0.0/en/dataset_script
+
+#     # filter wrong files for MultiGen
+#     if args.wrong_ids_file is not None:
+#         all_idx = [i for i in range(len(dataset['train']))]
+#         exclude_idx = pickle.load(open(args.wrong_ids_file, 'rb'))
+#         correct_idx = [item for item in all_idx if item not in exclude_idx]
+#         dataset['train'] = dataset['train'].select(correct_idx)
+#         print(f"filtering {len(exclude_idx)} rows")
+
+#     # Preprocessing the datasets.
+#     # We need to tokenize inputs and targets.
+#     column_names = dataset[split].column_names
+
+#     # 6. Get the column names for input/target.
+#     if args.image_column is None:
+#         image_column = column_names[0]
+#         logger.info(f"image column defaulting to {image_column}")
+#     else:
+#         image_column = args.image_column
+#         if image_column not in column_names:
+#             raise ValueError(
+#                 f"`--image_column` value '{args.image_column}' not found in dataset columns. Dataset columns are: {', '.join(column_names)}"
+#             )
+
+#     if args.caption_column is None:
+#         caption_column = column_names[1]
+#         logger.info(f"caption column defaulting to {caption_column}")
+#     else:
+#         caption_column = args.caption_column
+#         if caption_column not in column_names:
+#             raise ValueError(
+#                 f"`--caption_column` value '{args.caption_column}' not found in dataset columns. Dataset columns are: {', '.join(column_names)}"
+#             )
+
+#     if args.conditioning_image_column is None:
+#         conditioning_image_column = column_names[2]
+#         logger.info(f"conditioning image column defaulting to {conditioning_image_column}")
+#     elif args.conditioning_image_column in ['canny', 'lineart', 'hed']:
+#         conditioning_image_column = image_column
+#         logger.info(f"conditioning image column defaulting to {conditioning_image_column}")
+#     else:
+#         conditioning_image_column = args.conditioning_image_column
+#         if conditioning_image_column not in column_names:
+#             raise ValueError(
+#                 f"`--conditioning_image_column` value '{args.conditioning_image_column}' not found in dataset columns. Dataset columns are: {', '.join(column_names)}"
+#             )
+
+#     if args.task_name == 'identity':
+#         args.conditioning_image_column = "identity_embedding"
+    
+#     def tokenize_captions(examples, is_train=True):
+#         captions = ["" for _ in examples[caption_column]] 
+#         # for caption in examples[caption_column]:
+#         #     if isinstance(caption, str):
+#         #         captions.append(caption)
+#         #     elif isinstance(caption, (list, np.ndarray)):
+#         #         # take a random caption if there are multiple
+#         #         captions.append(random.choice(caption) if is_train else caption[0])
+#         #     else:
+#         #         raise ValueError(
+#         #             f"Caption column `{caption_column}` should contain either strings or lists of strings."
+#         #         )
+#         inputs = tokenizer(
+#             captions, max_length=tokenizer.model_max_length, padding="max_length", truncation=True, return_tensors="pt"
+#         )
+#         return inputs.input_ids
+
+#     resolution = (args.resolution, args.resolution)
+#     image_transforms = transforms.Compose(
+#         [
+#             transforms.Resize(resolution, interpolation=transforms.InterpolationMode.BICUBIC, antialias=True),
+#             # transforms.CenterCrop(args.resolution),
+#             transforms.ToTensor(),
+#             transforms.Normalize([0.5], [0.5]),
+#         ]
+#     )
+
+#     conditioning_image_transforms = transforms.Compose(
+#         [
+#             transforms.Resize(resolution, interpolation=transforms.InterpolationMode.BICUBIC, antialias=True),
+#             # transforms.CenterCrop(args.resolution),
+#             transforms.ToTensor(),
+#         ]
+#     )
+
+#     label_image_transforms = transforms.Compose(
+#         [
+#             transforms.Resize(resolution, interpolation=transforms.InterpolationMode.NEAREST, antialias=True),
+#             # transforms.CenterCrop(args.resolution),
+#         ]
+#     )
+
+#     def preprocess_train(examples):
+#         pil_images = [image.convert("RGB") for image in examples[image_column]]
+#         images = [image_transforms(image) for image in pil_images]
+
+#         if args.task_name == 'identity':
+#             conditioning_data = [
+#                 torch.from_numpy(np.load(os.path.join(args.dataset_name, f))) 
+#                 for f in examples[args.conditioning_image_column]
+#             ]
+#             conditioning_data = torch.stack(conditioning_data)
+#         else:
+#             conditioning_images = [image.convert("RGB") for image in examples[conditioning_image_column]]
+#             conditioning_images = [conditioning_image_transforms(image) for image in conditioning_images]
+
+#         if args.label_column is not None:
+#             dtype = torch.long
+#             labels = [torch.tensor(np.asarray(label), dtype=dtype).unsqueeze(0) for label in examples[args.label_column]]
+#             labels = [label_image_transforms(label) for label in labels]
+
+#         # perform groupped random crop for image/conditioning_image/label
+#         if args.label_column is not None:
+#             grouped_data = [torch.cat([x, y, z]) for (x, y, z) in zip(images, conditioning_images, labels)]
+#             grouped_data = group_random_crop(grouped_data, args.resolution)
+
+#             images = [x[:3, :, :] for x in grouped_data]
+#             conditioning_images = [x[3:6, :, :] for x in grouped_data]
+#             labels = [x[6:, :, :] for x in grouped_data]
+
+#             # (1, H, W) => (H, w)
+#             if args.task_name == "segmentation":
+#                 labels = [label.squeeze(0) for label in labels]
+
+#             examples[args.label_column] = labels
+#         else:
+#             grouped_data = [torch.cat([x, y]) for (x, y) in zip(images, conditioning_images)]
+#             grouped_data = group_random_crop(grouped_data, args.resolution)
+
+#             images = [x[:3, :, :] for x in grouped_data]
+#             conditioning_images = [x[3:, :, :] for x in grouped_data]
+
+#         # Dropout some of features for classifier-free guidance.
+#         for i, img_condition in enumerate(conditioning_images):
+#             rand_num = random.random()
+#             if rand_num < args.image_condition_dropout:
+#                 conditioning_images[i] = torch.zeros_like(img_condition)
+#             elif rand_num < args.image_condition_dropout + args.text_condition_dropout:
+#                 examples[caption_column][i] = ""
+#             elif rand_num < args.image_condition_dropout + args.text_condition_dropout + args.all_condition_dropout:
+#                 conditioning_images[i] = torch.zeros_like(img_condition)
+#                 examples[caption_column][i] = ""
+
+#         examples["pixel_values"] = images
+#         if args.task_name == 'identity':
+#             examples["conditioning_values"] = identity_embeddings
+#         else:
+#             examples["conditioning_pixel_values"] = conditioning_images
+#         examples["input_ids"] = tokenize_captions(examples)
+
+#         return examples
+
+#     with accelerator.main_process_first():
+#         if args.max_train_samples is not None:
+#             dataset["train"] = dataset["train"].shuffle(seed=args.seed)
+#             # rewrite the shuffled dataset on disk as contiguous chunks of data
+#             dataset["train"] = dataset["train"].flatten_indices()
+#             dataset["train"] = dataset["train"].select(range(args.max_train_samples))
+
+#         # Set the training transforms
+#         train_dataset = dataset["train"].with_transform(preprocess_train)
+
+#     return dataset, train_dataset
 
 def collate_fn(examples):
     pixel_values = torch.stack([example["pixel_values"] for example in examples])
-    pixel_values = pixel_values.to(memory_format=torch.contiguous_format).float()
-
-    if args.task_name == 'identity':
-        conditioning_values = torch.stack([example["conditioning_values"] for example in examples])
-    else:
-        conditioning_values = torch.stack([example["conditioning_pixel_values"] for example in examples])
-    conditioning_values = conditioning_values.to(memory_format=torch.contiguous_format).float()
-
+    conditioning_values = torch.stack([example["conditioning_values"] for example in examples])
     input_ids = torch.stack([example["input_ids"] for example in examples])
-
-    if args.label_column is not None:
-        labels = torch.stack([example[args.label_column] for example in examples])
-        labels = labels.to(memory_format=torch.contiguous_format).float()
-    else:
-        labels = conditioning_pixel_values
-
+    
     return {
         "pixel_values": pixel_values,
-        "conditioning_pixel_values": conditioning_pixel_values,
+        "conditioning_values": conditioning_values,
         "input_ids": input_ids,
-        "labels": labels,
+        "labels": conditioning_values.clone()  
     }
+    
+# def collate_fn(examples):
+#     pixel_values = torch.stack([example["pixel_values"] for example in examples])
+#     pixel_values = pixel_values.to(memory_format=torch.contiguous_format).float()
+
+#     if args.task_name == 'identity':
+#         conditioning_values = torch.stack([example["conditioning_values"] for example in examples])
+#     else:
+#         conditioning_values = torch.stack([example["conditioning_pixel_values"] for example in examples])
+#     conditioning_values = conditioning_values.to(memory_format=torch.contiguous_format).float()
+
+#     input_ids = torch.stack([example["input_ids"] for example in examples])
+
+#     if args.label_column is not None:
+#         labels = torch.stack([example[args.label_column] for example in examples])
+#         labels = labels.to(memory_format=torch.contiguous_format).float()
+#     else:
+#         labels = conditioning_pixel_values
+
+#     return {
+#         "pixel_values": pixel_values,
+#         "conditioning_pixel_values": conditioning_pixel_values,
+#         "input_ids": input_ids,
+#         "labels": labels,
+#     }
 
 
 def main(args):
@@ -1501,12 +1565,20 @@ def main(args):
                 noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
                 if args.task_name == 'identity':
-                    controlnet_condition = batch["conditioning_values"].to(dtype=weight_dtype)
+                    if isinstance(batch["conditioning_values"][0], str):  
+                        embedding_paths = batch["conditioning_values"]
+                        conditioning_values = torch.stack([
+                            torch.from_numpy(np.load(os.path.join(args.local_embedding_dir, path)))
+                            for path in embedding_paths
+                        ]).to(accelerator.device, dtype=weight_dtype)
+                    else: 
+                        conditioning_values = batch["conditioning_values"].to(dtype=weight_dtype)
+                    
                     up_block_res_samples, _ = controlnet(
                         noisy_latents,
                         timesteps,
                         encoder_hidden_states=encoder_hidden_states,
-                        identity_embeddings=controlnet_condition,
+                        identity_embeddings=conditioning_values,
                         return_dict=False,
                     )
                     
@@ -1572,7 +1644,10 @@ def main(args):
                         # Extract identity embeddings from generated image
                         generated_embeddings = reward_model(normalized_image.to(accelerator.device))
                         # Get original identity embeddings from batch
-                        original_embeddings = batch["identity_embeddings"].to(accelerator.device)
+                        if isinstance(batch["conditioning_values"][0], str):  
+                            original_embeddings = conditioning_values  
+                        else:
+                            original_embeddings = batch["conditioning_values"].to(accelerator.device)
                         
                         reward_loss = 1 - F.cosine_similarity(generated_embeddings, original_embeddings)
                         outputs = generated_embeddings

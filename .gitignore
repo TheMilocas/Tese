@@ -39,3 +39,5 @@ ControlNetFolder/controlnetinpaint/zeroed_controlnet
 ControlNetFolder/controlnetinpaint/zero_controlnet
 celebahq-idi
 datasets
+wandb
+.config/wandb

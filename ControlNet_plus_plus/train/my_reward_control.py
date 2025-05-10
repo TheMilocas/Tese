@@ -54,7 +54,6 @@ except ImportError:
 import diffusers
 from diffusers import (
     AutoencoderKL,
-    ControlNetModel,
     DDPMScheduler,
     StableDiffusionControlNetPipeline,
     UNet2DConditionModel,
@@ -67,6 +66,7 @@ from diffusers.utils.import_utils import is_xformers_available
 
 from utils import image_grid, get_reward_model, get_reward_loss, label_transform, group_random_crop
 
+from diffusers_new.src.diffusers.models.controlnets.controlnet import ControlNetModel
 
 from PIL import PngImagePlugin
 MaximumDecompressedsize = 1024
@@ -900,56 +900,136 @@ def parse_args(input_args=None):
     return args
 
 def make_train_dataset(args, tokenizer, accelerator, split='train'):
+    # Get the datasets
+    if args.dataset_name is not None:
+        if args.dataset_name.count('/') == 1:
+            dataset = load_dataset(
+                args.dataset_name,
+                args.dataset_config_name,
+                cache_dir=args.cache_dir,
+                keep_in_memory=args.keep_in_memory,
+            )
+        else:
+            dataset = load_from_disk(
+                dataset_path=args.dataset_name,
+                keep_in_memory=args.keep_in_memory,
+            )
+    else:
+        if args.train_data_dir is not None:
+            dataset = load_dataset(
+                args.train_data_dir,
+                cache_dir=args.cache_dir,
+                keep_in_memory=args.keep_in_memory,
+            )
 
-    dataset = load_dataset(args.dataset_name, keep_in_memory=args.keep_in_memory)
+    # Filter wrong files if specified
+    if args.wrong_ids_file is not None:
+        all_idx = [i for i in range(len(dataset['train']))]
+        exclude_idx = pickle.load(open(args.wrong_ids_file, 'rb'))
+        correct_idx = [item for item in all_idx if item not in exclude_idx]
+        dataset['train'] = dataset['train'].select(correct_idx)
+        print(f"filtering {len(exclude_idx)} rows")
 
-    required_columns = {args.image_column, args.conditioning_image_column}
-    missing_columns = required_columns - set(dataset['train'].column_names)
-    if missing_columns:
-        raise ValueError(f"Dataset missing required columns: {missing_columns}")
+    column_names = dataset[split].column_names
+    print(f"Dataset columns: {column_names}")  # Debugging
 
-    image_transforms = transforms.Compose([
-        transforms.Resize(args.resolution, interpolation=BICUBIC),
-        transforms.ToTensor(),
-        transforms.Normalize([0.5], [0.5]),
-    ])
+    # Get column names
+    if args.image_column is None:
+        image_column = column_names[0]
+        logger.info(f"image column defaulting to {image_column}")
+    else:
+        image_column = args.image_column
+        if image_column not in column_names:
+            raise ValueError(
+                f"--image_column value '{args.image_column}' not found in dataset columns. Dataset columns are: {', '.join(column_names)}"
+            )
+
+    # Handle caption column (optional)
+    has_captions = False
+    if args.caption_column is not None:
+        if args.caption_column in column_names:
+            caption_column = args.caption_column
+            has_captions = True
+        else:
+            logger.warning(
+                f"--caption_column value '{args.caption_column}' not found in dataset columns. Proceeding without captions."
+            )
+    else:
+        # Try common caption column names
+        for potential_name in ['caption', 'text', 'description']:
+            if potential_name in column_names:
+                caption_column = potential_name
+                has_captions = True
+                logger.info(f"Using '{potential_name}' as caption column")
+                break
+
+    # Handle embedding column
+    embedding_column = "condition"
+    if embedding_column not in column_names:
+        raise ValueError(
+            f"Dataset must contain a 'condition' column with paths to embeddings. Found columns: {', '.join(column_names)}"
+        )
+    logger.info(f"Using column '{embedding_column}' for embedding paths")
+    
+    def tokenize_captions(examples):
+        empty_caption = tokenizer(
+            "", 
+            max_length=tokenizer.model_max_length, 
+            padding="max_length", 
+            return_tensors="pt"
+        )
+        return empty_caption.input_ids.repeat(len(examples["image"]), 1)
+
+    resolution = (args.resolution, args.resolution)
+    image_transforms = transforms.Compose(
+        [
+            transforms.Resize(resolution, interpolation=transforms.InterpolationMode.BICUBIC, antialias=True),
+            transforms.ToTensor(),
+            transforms.Normalize([0.5], [0.5]),
+        ]
+    )
 
     def preprocess_train(examples):
+        # Process images
+        pil_images = [image.convert("RGB") for image in examples[image_column]]
+        images = [image_transforms(image) for image in pil_images]
 
-        images = [image.convert("RGB") for image in examples[args.image_column]]
-        images = [image_transforms(image) for image in images]
+        # Process embeddings
+        conditioning_values = []  
+        for emb_path in examples["condition"]:
+            try:
+                emb = np.load(emb_path)
+                if emb.shape[0] != 512:
+                    raise ValueError(f"Invalid embedding dimension: {emb.shape[0]}")
+                conditioning_values.append(torch.tensor(emb, dtype=torch.float32))
+            except Exception as e:
+                raise ValueError(f"Failed to load {emb_path}: {str(e)}")
     
-        # Process embeddings - assuming examples[args.conditioning_image_column] contains full paths
-        embeddings = []
-        for abs_path in examples[args.conditioning_image_column]:  # Now using absolute paths
-            if not os.path.exists(abs_path):
-                raise FileNotFoundError(f"Embedding file not found: {abs_path}")
-            embeddings.append(torch.from_numpy(np.load(abs_path)))
-        
-        examples["pixel_values"] = images
-        examples["conditioning_values"] = embeddings
-        examples["input_ids"] = tokenizer([""]*len(images), 
-                                        padding="max_length", 
-                                        truncation=True, 
-                                        return_tensors="pt").input_ids
-        return examples
+        conditioning_values = torch.stack(conditioning_values)
+
+        return {
+            "pixel_values": images,
+            "conditioning_values": conditioning_values,  
+            "input_ids": tokenize_captions(examples),
+        }
 
     with accelerator.main_process_first():
-        train_dataset = dataset['train'].map(
-            preprocess_train,
-            batched=True,
-            remove_columns=dataset['train'].column_names
-        )
+        if args.max_train_samples is not None:
+            dataset["train"] = dataset["train"].shuffle(seed=args.seed)
+            dataset["train"] = dataset["train"].flatten_indices()
+            dataset["train"] = dataset["train"].select(range(args.max_train_samples))
 
-        if 'validation' in dataset:
-            val_dataset = dataset['validation']
-        elif 'test' in dataset:
-            val_dataset = dataset['test']
-        else:
-            dataset = dataset['train'].train_test_split(test_size=0.1)
-            val_dataset = dataset['test']
+        train_dataset = dataset["train"].with_transform(preprocess_train)
 
     return dataset, train_dataset
+
+
+def collate_fn(examples):
+    return {
+        "pixel_values": torch.stack([x["pixel_values"] for x in examples]),
+        "conditioning_values": torch.stack([x["conditioning_values"] for x in examples]), 
+        "input_ids": torch.stack([x["input_ids"] for x in examples]),
+    }
     
 # def make_train_dataset(args, tokenizer, accelerator, split='train'):
 #     # Get the datasets: you can either provide your own training and evaluation files (see below)
@@ -1149,18 +1229,6 @@ def make_train_dataset(args, tokenizer, accelerator, split='train'):
 #         train_dataset = dataset["train"].with_transform(preprocess_train)
 
 #     return dataset, train_dataset
-
-def collate_fn(examples):
-    pixel_values = torch.stack([example["pixel_values"] for example in examples])
-    conditioning_values = torch.stack([example["conditioning_values"] for example in examples])
-    input_ids = torch.stack([example["input_ids"] for example in examples])
-    
-    return {
-        "pixel_values": pixel_values,
-        "conditioning_values": conditioning_values,
-        "input_ids": input_ids,
-        "labels": conditioning_values.clone()  
-    }
     
 # def collate_fn(examples):
 #     pixel_values = torch.stack([example["pixel_values"] for example in examples])
@@ -1269,7 +1337,10 @@ def main(args):
         controlnet = ControlNetModel.from_pretrained(args.controlnet_model_name_or_path)
     else:
         logger.info("Initializing controlnet weights from unet")
-        controlnet = ControlNetModel.from_unet(unet)
+        controlnet = ControlNetModel.from_unet(
+            unet,
+            load_weights_from_unet=True
+        )
 
     # `accelerate` 0.16.0 will have better support for customized saving
     if version.parse(accelerate.__version__) >= version.parse("0.16.0"):

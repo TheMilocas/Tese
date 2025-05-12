@@ -44,74 +44,50 @@ logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 class NoSkipUpBlock2D(nn.Module):
     def __init__(
         self,
-        in_channels: int,
-        prev_output_channel: int,
-        out_channels: int,
-        temb_channels: int,
-        resolution_idx: Optional[int] = None,
-        dropout: float = 0.0,
-        num_layers: int = 1,
-        resnet_eps: float = 1e-6,
-        resnet_time_scale_shift: str = "default",
-        resnet_act_fn: str = "swish",
-        resnet_groups: int = 32,
-        resnet_pre_norm: bool = True,
-        output_scale_factor: float = 1.0,
-        add_upsample: bool = True,
+        in_channels,
+        out_channels,
+        temb_channels,
+        num_layers,
+        resnet_eps,
+        resnet_time_scale_shift,
+        dropout,
+        resnet_act_fn,
+        resnet_groups,
+        add_upsample,
     ):
         super().__init__()
-        resnets = []
+        self.resnets = nn.ModuleList([])
+        self.upsamplers = nn.ModuleList([])
 
         for i in range(num_layers):
-            resnet_in_channels = prev_output_channel if i == 0 else out_channels
-
-            resnets.append(
+            resnet_in_channels = in_channels if i == 0 else out_channels
+            self.resnets.append(
                 ResnetBlock2D(
                     in_channels=resnet_in_channels,
                     out_channels=out_channels,
                     temb_channels=temb_channels,
                     eps=resnet_eps,
                     groups=resnet_groups,
-                    dropout=dropout,
+                    groups_out=None,
                     time_embedding_norm=resnet_time_scale_shift,
+                    dropout=dropout,
                     non_linearity=resnet_act_fn,
-                    output_scale_factor=output_scale_factor,
-                    pre_norm=resnet_pre_norm,
+                    output_scale_factor=1.0,
+                    conv_shortcut=False,
                 )
             )
 
-        self.resnets = nn.ModuleList(resnets)
-
         if add_upsample:
-            self.upsamplers = nn.ModuleList([Upsample2D(out_channels, use_conv=True, out_channels=out_channels)])
-        else:
-            self.upsamplers = None
+            self.upsamplers.append(Upsample2D(out_channels, use_conv=True, out_channels=out_channels))
 
-        self.gradient_checkpointing = False
-        self.resolution_idx = resolution_idx
-
-    def forward(
-        self,
-        hidden_states: torch.Tensor,
-        res_hidden_states_tuple: Tuple[torch.Tensor, ...] = None,  # Made optional
-        temb: Optional[torch.Tensor] = None,
-        upsample_size: Optional[int] = None,
-        *args,
-        **kwargs,
-    ) -> Tuple[torch.Tensor, Tuple]:
-        
+    def forward(self, hidden_states):
         for resnet in self.resnets:
-            if torch.is_grad_enabled() and self.gradient_checkpointing:
-                hidden_states = self._gradient_checkpointing_func(resnet, hidden_states, temb)
-            else:
-                hidden_states = resnet(hidden_states, temb)
+            hidden_states = resnet(hidden_states)
 
-        if self.upsamplers is not None:
-            for upsampler in self.upsamplers:
-                hidden_states = upsampler(hidden_states, upsample_size)
+        for upsample in self.upsamplers:
+            hidden_states = upsample(hidden_states)
 
-        # Return empty tuple for residuals to maintain interface
-        return hidden_states, ()
+        return hidden_states
 
 @dataclass
 class ControlNetOutput(BaseOutput):
@@ -158,17 +134,17 @@ class ControlNetConditioningEmbedding(nn.Module):
         )
 
     def forward(self, conditioning):
-        print(f"Input conditioning shape: {conditioning.shape}")  # (batch_size, 512)
+        #print(f"Input conditioning shape: {conditioning.shape}")  # (batch_size, 512)
         
         batch_size = conditioning.shape[0]
         embedding = self.fc(conditioning)
-        print(f"After FC layer shape: {embedding.shape}")  # (batch_size, channels*height*width)
+        #print(f"After FC layer shape: {embedding.shape}")  # (batch_size, channels*height*width)
         
         embedding = embedding.view(batch_size, *self.target_shape)
-        print(f"After reshape shape: {embedding.shape}")  # target_shape
+        #print(f"After reshape shape: {embedding.shape}")  # target_shape
         
         embedding = self.conv_out(embedding)
-        print(f"Final output shape: {embedding.shape}\n")  # final shape after zero conv
+        #print(f"Final output shape: {embedding.shape}\n")  # final shape after zero conv
         
         return embedding
 
@@ -252,14 +228,14 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
         flip_sin_to_cos: bool = True,
         freq_shift: int = 0,
         up_block_types: Tuple[str, ...] = (
+            "CrossAttnUpBlock2D",
+            "CrossAttnUpBlock2D",
+            "CrossAttnUpBlock2D",
             "UpBlock2D",
-            "CrossAttnUpBlock2D",
-            "CrossAttnUpBlock2D",
-            "CrossAttnUpBlock2D",
         ),
         mid_block_type: Optional[str] = "UNetMidBlock2DCrossAttn",
         only_cross_attention: Union[bool, Tuple[bool]] = False,
-        block_out_channels: Tuple[int, ...] = (1280, 1280, 640, 320),
+        block_out_channels: Tuple[int, ...] = (1280, 640, 320, 320),
         layers_per_block: int = 2,
         upsample_padding: int = 1,
         mid_block_scale_factor: float = 1,
@@ -283,6 +259,8 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
         target_shape: Optional[Tuple[int, int, int]] = (1280, 8, 8),
         global_pool_conditions: bool = False,
         addition_embed_type_num_heads: int = 64,
+        resnet_channel_config: Optional[List[List[Tuple[int, int]]]] = None,
+        mid_block_channel: Optional[int] = None,
     ):
         super().__init__()
 
@@ -426,7 +404,8 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
             num_attention_heads = (num_attention_heads,) * len(up_block_types)
 
         # mid
-        mid_block_channel = block_out_channels[0]
+        if mid_block_channel is None:
+            mid_block_channel = block_out_channels[0]
 
         controlnet_block = nn.Conv2d(mid_block_channel, mid_block_channel, kernel_size=1)
         controlnet_block = zero_module(controlnet_block)
@@ -466,40 +445,46 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
         self.up_blocks = nn.ModuleList([])
         self.controlnet_up_blocks = nn.ModuleList([])
         
-        for i, up_block_type in enumerate(up_block_types):
-            input_channels = block_out_channels[i]
-            out_channels = block_out_channels[i]
-            is_final_block = i == len(block_out_channels) - 1
-            
-            # Special handling for first block to prevent channel mismatch
-            if i == 0:
-                prev_output_channel = input_channels
-            else:
-                prev_output_channel = block_out_channels[i-1]
+        for i, (block_resnet_configs, up_block_type) in enumerate(zip(resnet_channel_config, up_block_types)):
+            add_upsample = i != len(up_block_types) - 1
         
-            print(f"Creating UpBlock {i}: in={input_channels}, out={out_channels}, prev={prev_output_channel}")
+            print(f"Creating UpBlock {i}")
             
-            up_block = NoSkipUpBlock2D(
-                in_channels=in_channels,
-                prev_output_channel=prev_output_channel,
-                out_channels=out_channels,
-                temb_channels=time_embed_dim,
-                num_layers=layers_per_block,
-                resnet_eps=norm_eps,
-                resnet_act_fn=act_fn,
-                resnet_groups=norm_num_groups,
-                add_upsample=i != 0,
-                output_scale_factor=mid_block_scale_factor
-            )
+            resnets = nn.ModuleList()
+            for j, (resnet_in, resnet_out) in enumerate(block_resnet_configs):
+                print(f"  ResNet {j}: in={resnet_in}, out={resnet_out}")
+                resnet = ResnetBlock2D(
+                    in_channels=resnet_in,
+                    out_channels=resnet_out,
+                    temb_channels=time_embed_dim,
+                    eps=norm_eps,
+                    groups=norm_num_groups,
+                    groups_out=None,
+                    time_embedding_norm=resnet_time_scale_shift,
+                    dropout=0.0,
+                    non_linearity=act_fn,
+                    output_scale_factor=1.0,
+                    conv_shortcut=False,
+                )
+                resnets.append(resnet)
+        
+            upsamplers = nn.ModuleList()
+            if add_upsample:
+                out_channels_last = block_resnet_configs[-1][1]
+                upsamplers.append(Upsample2D(out_channels_last, use_conv=True, out_channels=out_channels_last))
+        
+            up_block = nn.Module()
+            up_block.resnets = resnets
+            up_block.upsamplers = upsamplers
             self.up_blocks.append(up_block)
-
-            controlnet_block = nn.Conv2d(out_channels, out_channels, kernel_size=1)
-            controlnet_block = zero_module(controlnet_block)
-            self.controlnet_up_blocks.append(controlnet_block)
-            
-            print(f"Up block {i}: in={prev_output_channel}, out={out_channels}, norm_groups={up_block.resnets[0].norm1.num_groups}")
-        print("")
         
+            controlnet_channels = block_resnet_configs[-1][1]
+            controlnet_block = zero_module(nn.Conv2d(controlnet_channels, controlnet_channels, kernel_size=1))
+            self.controlnet_up_blocks.append(controlnet_block)
+        
+            print(f"UpBlock {i}: out_channels for controlnet = {controlnet_channels}")
+
+    
     @classmethod
     def from_unet(
         cls,
@@ -524,11 +509,24 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
             unet.config.addition_time_embed_dim if "addition_time_embed_dim" in unet.config else None
         )
 
-        # target_shape = (
-        # unet.config.block_out_channels[-1],  # channels
-        # unet.config.sample_size // (2 ** (len(unet.config.block_out_channels) - 1)),  # height
-        # unet.config.sample_size // (2 ** (len(unet.config.block_out_channels) - 1))   # width
-        # )
+        target_shape = (
+            unet.config.block_out_channels[-1],  # channels
+            unet.config.sample_size // (2 ** (len(unet.config.block_out_channels) - 1)),  # height
+            unet.config.sample_size // (2 ** (len(unet.config.block_out_channels) - 1))   # width
+        )     
+        
+        conditioning_dim = unet.config.get("conditioning_dim", 512)
+
+        resnet_channel_config = []
+        for up_block in unet.up_blocks:
+            block_config = []
+            for resnet in up_block.resnets:
+                in_ch = resnet.conv1.in_channels
+                out_ch = resnet.conv2.out_channels
+                block_config.append((in_ch, out_ch))
+            resnet_channel_config.append(block_config)
+
+        mid_block_channel = unet.config.block_out_channels[-1]
         
         controlnet = cls(
             encoder_hid_dim=encoder_hid_dim,
@@ -543,7 +541,7 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
             only_cross_attention=unet.config.only_cross_attention,
             block_out_channels=unet.config.block_out_channels,
             layers_per_block=unet.config.layers_per_block,
-            upsample_padding=unet.config.upsample_padding,
+            upsample_padding=unet.config.get("upsample_padding", 1),
             mid_block_scale_factor=unet.config.mid_block_scale_factor,
             act_fn=unet.config.act_fn,
             norm_num_groups=unet.config.norm_num_groups,
@@ -560,10 +558,12 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
             mid_block_type=unet.config.mid_block_type,
             conditioning_dim=conditioning_dim,
             target_shape=target_shape,
+            resnet_channel_config=resnet_channel_config,
+            mid_block_channel=mid_block_channel,
         )
 
         if load_weights_from_unet:
-            controlnet.conv_in.load_state_dict(unet.conv_in.state_dict())
+            controlnet.conv_in[0].load_state_dict(unet.conv_in.state_dict())
             controlnet.time_proj.load_state_dict(unet.time_proj.state_dict())
             controlnet.time_embedding.load_state_dict(unet.time_embedding.state_dict())
 
@@ -572,8 +572,26 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
 
             if hasattr(controlnet, "add_embedding"):
                 controlnet.add_embedding.load_state_dict(unet.add_embedding.state_dict())
-
-            controlnet.up_blocks.load_state_dict(unet.up_blocks.state_dict())
+                
+            for control_block, unet_block in zip(controlnet.up_blocks, unet.up_blocks):
+                for i in range(len(control_block.resnets)):
+                    control_resnet = control_block.resnets[i]
+                    unet_resnet = unet_block.resnets[i]
+            
+                    # Debug: print layer names and shapes
+                    print(f"\n[DEBUG] UpBlock {i} resnet:")
+                    print(f"  UNet:    norm1.weight = {unet_resnet.norm1.weight.shape}, conv1.weight = {unet_resnet.conv1.weight.shape}")
+                    print(f"  Control: norm1.weight = {control_resnet.norm1.weight.shape}, conv1.weight = {control_resnet.conv1.weight.shape}")
+            
+                    control_resnet.load_state_dict(unet_resnet.state_dict(), strict=False)
+    
+                if hasattr(control_block, "upsamplers") and hasattr(unet_block, "upsamplers"):
+                    for i in range(len(control_block.upsamplers)):
+                        control_upsample = control_block.upsamplers[i]
+                        unet_upsample = unet_block.upsamplers[i]
+            
+                        control_upsample.load_state_dict(unet_upsample.state_dict(), strict=False)
+            #controlnet.up_blocks.load_state_dict(unet.up_blocks.state_dict())
             controlnet.mid_block.load_state_dict(unet.mid_block.state_dict())
 
         return controlnet
@@ -854,12 +872,12 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
         emb = emb + aug_emb if aug_emb is not None else emb
 
         # 2. pre-process
-        print(f"Input sample shape: {sample.shape}")
+        #print(f"Input sample shape: {sample.shape}")
         sample = self.conv_in(sample)
-        print(f"After conv_in shape: {sample.shape}")
+        #print(f"After conv_in shape: {sample.shape}")
         controlnet_cond = self.controlnet_cond_embedding(controlnet_cond)      
         sample = sample + controlnet_cond
-        print(f"Sample after conditioning: {sample.shape}")
+        #print(f"Sample after conditioning: {sample.shape}")
     
         # 3. Mid block
         if self.mid_block is not None:
@@ -901,12 +919,12 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
                     temb=emb,
                 )
     
-            print(f"Output shape: {sample.shape}")
+            #print(f"Output shape: {sample.shape}")
     
             # Apply controlnet block
             controlled_sample = self.controlnet_up_blocks[i](sample)
             up_block_res_samples.append(controlled_sample)
-            print(f"Controlled sample shape: {controlled_sample.shape}")
+            #print(f"Controlled sample shape: {controlled_sample.shape}")
     
         # 5. Scaling
         if guess_mode and not self.config.global_pool_conditions:

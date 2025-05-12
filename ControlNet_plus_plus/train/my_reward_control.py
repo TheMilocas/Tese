@@ -201,7 +201,7 @@ def log_validation(
             with torch.autocast("cuda"):
                 images = pipeline(
                     [""] * len(validation_embeddings),
-                    identity_embeddings=validation_embeddings,
+                    controlnet_cond=validation_embeddings,
                     num_inference_steps=20,
                     generator=generator
                 ).images
@@ -274,7 +274,7 @@ def log_validation(
                 with torch.autocast("cuda"):
                     images = pipeline(
                         [""] * len(validation_embeddings),
-                        identity_embeddings=validation_embeddings,
+                        controlnet_cond=validation_embeddings,
                         num_inference_steps=20,
                         generator=generator
                     ).images
@@ -1211,7 +1211,7 @@ def collate_fn(examples):
 
 #         examples["pixel_values"] = images
 #         if args.task_name == 'identity':
-#             examples["conditioning_values"] = identity_embeddings
+#             examples["conditioning_values"] = controlnet_cond
 #         else:
 #             examples["conditioning_pixel_values"] = conditioning_images
 #         examples["input_ids"] = tokenize_captions(examples)
@@ -1649,7 +1649,7 @@ def main(args):
                         noisy_latents,
                         timesteps,
                         encoder_hidden_states=encoder_hidden_states,
-                        identity_embeddings=conditioning_values,
+                        controlnet_cond=conditioning_values,
                         return_dict=False,
                     )
                     

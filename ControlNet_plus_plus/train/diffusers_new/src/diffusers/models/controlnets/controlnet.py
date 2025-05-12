@@ -386,7 +386,6 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
             raise ValueError(f"addition_embed_type: {addition_embed_type} must be None, 'text' or 'text_image'.")
 
         
-        
         # control net conditioning embedding
         self.controlnet_cond_embedding = ControlNetConditioningEmbedding(
             conditioning_embedding_channels=block_out_channels[0],
@@ -743,7 +742,7 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
         sample: torch.Tensor,
         timestep: Union[torch.Tensor, float, int],
         encoder_hidden_states: torch.Tensor,
-        controlnet_cond: torch.Tensor,
+        controlnet_cond: Optional[torch.FloatTensor] = None,
         conditioning_scale: float = 1.0,
         class_labels: Optional[torch.Tensor] = None,
         timestep_cond: Optional[torch.Tensor] = None,

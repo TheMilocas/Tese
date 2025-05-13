@@ -1,5 +1,6 @@
 import torch
 from torch import nn
+from diffusers import UNet2DConditionModel
 from diffusers.models.controlnets.controlnet import (
     ControlNetModel,
     ControlNetOutput,
@@ -33,7 +34,7 @@ def test_controlnet_model_initialization():
     model = ControlNetModel(
         conditioning_dim=512,
         target_shape=(1280, 8, 8),
-        block_out_channels=(1280, 1280, 640, 320)
+        block_out_channels=(1280, 640, 320, 320)
     )
     
     assert hasattr(model, 'controlnet_cond_embedding')
@@ -46,7 +47,7 @@ def test_forward_pass_shapes():
     model = ControlNetModel(
         conditioning_dim=512,
         target_shape=(1280, 8, 8),
-        block_out_channels=(1280, 1280, 640, 320)
+        block_out_channels=(1280, 640, 320, 320)
     ).eval()
     
     batch_size = 2
@@ -75,31 +76,22 @@ def test_forward_pass_shapes():
     
 def test_from_unet_loading():
     print("Running: test_from_unet_loading")
-    class DummyUNet(nn.Module):
-        def __init__(self):
-            super().__init__()
-            self.conv_in = nn.Conv2d(4, 320, kernel_size=3, padding=1)
-            self.mid_block = nn.Conv2d(1280, 1280, kernel_size=3, padding=1)
-            self.up_blocks = nn.ModuleList([nn.Conv2d(1280, 640, kernel_size=3, padding=1)])
-            self.config = lambda: None
-            self.config.in_channels = 4
-            self.config.block_out_channels = (1280, 1280, 640, 320)
 
-    dummy_unet = DummyUNet()
+    unet = UNet2DConditionModel.from_pretrained("runwayml/stable-diffusion-v1-5", subfolder="unet")
+    
     controlnet = ControlNetModel.from_unet(
-        dummy_unet,
+        unet,
         load_weights_from_unet=True,
     )
 
-    assert torch.allclose(controlnet.conv_in.weight, dummy_unet.conv_in.weight)
-    assert torch.allclose(controlnet.mid_block.weight, dummy_unet.mid_block.weight)
+    assert torch.allclose(controlnet.conv_in[0].weight, unet.conv_in.weight)
     print("Passed\n")
 
 def test_controlnet_output_order():
     print("Running: test_controlnet_output_order")
     model = ControlNetModel(
         conditioning_dim=512,
-        block_out_channels=(1280, 1280, 640, 320)
+        block_out_channels=(1280, 640, 320, 320)
     ).eval()
 
     dummy_input = torch.randn(2, 4, 64, 64)
@@ -136,7 +128,7 @@ def test_attention_processors():
 if __name__ == "__main__":
     test_controlnet_model_initialization()
     test_forward_pass_shapes()
-    #test_from_unet_loading()
+    test_from_unet_loading()
     test_controlnet_output_order()
     test_gradient_checkpointing()
     test_attention_processors()

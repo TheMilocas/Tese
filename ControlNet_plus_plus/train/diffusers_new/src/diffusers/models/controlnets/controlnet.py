@@ -118,35 +118,46 @@ class ControlNetConditioningEmbedding(nn.Module):
     model) to encode image-space conditions ... into feature maps ..."
     """
     def __init__(
-        self,
-        conditioning_embedding_channels: int,
-        conditioning_dim: int = 512,  # ArcFace vector dimension
-        target_shape: Tuple[int, int, int] = (1280, 8, 8),  # Default middle block shape (channels, height, width) - can be removed later
-    ):
+        self, 
+        conditioning_embedding_channels: int, 
+        conditioning_dim: int = 512,
+        target_shape: Tuple[int, int, int] = (1280, 8, 8)
+        ):
         super().__init__()
-        self.target_shape = target_shape
-        channels, height, width = target_shape
-        
-        self.fc = nn.Linear(conditioning_dim, channels * height * width)
-        
-        self.conv_out = zero_module(
-            nn.Conv2d(channels, conditioning_embedding_channels, kernel_size=3, padding=1)
+
+        self.fc = nn.Sequential(
+            nn.Linear(conditioning_dim, 128 * 4 * 4),
+            nn.SiLU()
+        )
+        self.block1 = ResnetBlock2D(in_channels=128, out_channels=256)
+        self.upsample1 = nn.Upsample(scale_factor=2, mode='nearest')  # 4x4 → 8x8
+
+        self.block2 = ResnetBlock2D(in_channels=256, out_channels=512)
+        self.block3 = ResnetBlock2D(in_channels=512, out_channels=target_shape[0])
+
+        self.out_conv = zero_module(
+            nn.Conv2d(target_shape[0], conditioning_embedding_channels, kernel_size=3, padding=1)
         )
 
-    def forward(self, conditioning):
-        #print(f"Input conditioning shape: {conditioning.shape}")  # (batch_size, 512)
-        
-        batch_size = conditioning.shape[0]
-        embedding = self.fc(conditioning)
-        #print(f"After FC layer shape: {embedding.shape}")  # (batch_size, channels*height*width)
-        
-        embedding = embedding.view(batch_size, *self.target_shape)
-        #print(f"After reshape shape: {embedding.shape}")  # target_shape
-        
-        embedding = self.conv_out(embedding)
-        #print(f"Final output shape: {embedding.shape}\n")  # final shape after zero conv
-        
-        return embedding
+    def forward(self, x):
+             
+        x = self.fc(x).view(x.size(0), 128, 4, 4)  # B, 128, 4, 4
+
+        temb_channels = getattr(self.block1, "temb_channels", 512)
+        temb = torch.zeros(x.size(0), temb_channels, device=x.device)
+        #print(x.shape)
+        x = self.block1(x, temb)
+        #print(x.shape)
+        x = self.upsample1(x)
+        #print(x.shape)
+        x = self.block2(x, temb)
+        #print(x.shape)
+        x = self.block3(x, temb)
+        #print(x.shape)        
+        x = self.out_conv(x)
+        print(x.shape)
+       
+        return x
 
 
 class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
@@ -388,10 +399,12 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
         
         # control net conditioning embedding
         self.controlnet_cond_embedding = ControlNetConditioningEmbedding(
-            conditioning_embedding_channels=block_out_channels[0],
+            conditioning_embedding_channels=block_out_channels[-1],
             conditioning_dim=conditioning_dim,
             target_shape=target_shape
         )
+
+        print(self.controlnet_cond_embedding.parameters())
         
         if isinstance(only_cross_attention, bool):
             only_cross_attention = [only_cross_attention] * len(up_block_types)
@@ -409,11 +422,13 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
         controlnet_block = nn.Conv2d(mid_block_channel, mid_block_channel, kernel_size=1)
         controlnet_block = zero_module(controlnet_block)
         self.controlnet_mid_block = controlnet_block
-
+        
+        #print("[DEBUG] mid_block expected in_channels =", block_out_channels[-1])
+        
         if mid_block_type == "UNetMidBlock2DCrossAttn":
             self.mid_block = UNetMidBlock2DCrossAttn(
                 transformer_layers_per_block=transformer_layers_per_block[-1],
-                in_channels=mid_block_channel,
+                in_channels=block_out_channels[-1],
                 temb_channels=time_embed_dim,
                 resnet_eps=norm_eps,
                 resnet_act_fn=act_fn,
@@ -515,8 +530,9 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
         )     
         
         conditioning_dim = unet.config.get("conditioning_dim", 512)
-
+        mid_block_channel = unet.config.block_out_channels[-1]
         resnet_channel_config = []
+        
         for up_block in unet.up_blocks:
             block_config = []
             for resnet in up_block.resnets:
@@ -525,8 +541,6 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
                 block_config.append((in_ch, out_ch))
             resnet_channel_config.append(block_config)
 
-        mid_block_channel = unet.config.block_out_channels[-1]
-        
         controlnet = cls(
             encoder_hid_dim=encoder_hid_dim,
             encoder_hid_dim_type=encoder_hid_dim_type,
@@ -876,8 +890,8 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
         #print(f"After conv_in shape: {sample.shape}")
         controlnet_cond = self.controlnet_cond_embedding(controlnet_cond)      
         sample = sample + controlnet_cond
-        #print(f"Sample after conditioning: {sample.shape}")
-    
+        #print(f"Before mid_block: sample shape = {sample.shape}")
+
         # 3. Mid block
         if self.mid_block is not None:
             if hasattr(self.mid_block, "has_cross_attention"):

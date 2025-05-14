@@ -34,7 +34,7 @@ def test_controlnet_model_initialization():
     model = ControlNetModel(
         conditioning_dim=512,
         target_shape=(1280, 8, 8),
-        block_out_channels=(1280, 640, 320, 320)
+        block_out_channels=(1280, 1280, 640, 320)
     )
     
     assert hasattr(model, 'controlnet_cond_embedding')
@@ -47,7 +47,7 @@ def test_forward_pass_shapes():
     model = ControlNetModel(
         conditioning_dim=512,
         target_shape=(1280, 8, 8),
-        block_out_channels=(1280, 640, 320, 320)
+        block_out_channels=(1280, 1280, 640, 320)
     ).eval()
     
     batch_size = 2
@@ -91,7 +91,7 @@ def test_controlnet_output_order():
     print("Running: test_controlnet_output_order")
     model = ControlNetModel(
         conditioning_dim=512,
-        block_out_channels=(1280, 640, 320, 320)
+        block_out_channels=(1280, 1280, 640, 320)
     ).eval()
 
     dummy_input = torch.randn(2, 4, 64, 64)
@@ -126,9 +126,9 @@ def test_attention_processors():
     print("Passed\n")
 
 if __name__ == "__main__":
-    #test_controlnet_model_initialization()
-    #test_forward_pass_shapes()
-    test_from_unet_loading()
-    #test_controlnet_output_order()
-    #test_gradient_checkpointing()
-    #test_attention_processors()
+    test_controlnet_model_initialization()
+    test_forward_pass_shapes()
+    #test_from_unet_loading()
+    test_controlnet_output_order()
+    test_gradient_checkpointing()
+    test_attention_processors()

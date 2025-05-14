@@ -972,13 +972,13 @@ def make_train_dataset(args, tokenizer, accelerator, split='train'):
     logger.info(f"Using column '{embedding_column}' for embedding paths")
     
     def tokenize_captions(examples):
-        empty_caption = tokenizer(
-            "", 
-            max_length=tokenizer.model_max_length, 
-            padding="max_length", 
-            return_tensors="pt"
-        )
-        return empty_caption.input_ids.repeat(len(examples["image"]), 1)
+        return tokenizer(
+            [""] * len(examples["image"]),
+            max_length=tokenizer.model_max_length,
+            padding="max_length",
+            return_tensors="pt",
+            truncation=True
+        ).input_ids
 
     resolution = (args.resolution, args.resolution)
     image_transforms = transforms.Compose(
@@ -1644,6 +1644,10 @@ def main(args):
                         ]).to(accelerator.device, dtype=weight_dtype)
                     else: 
                         conditioning_values = batch["conditioning_values"].to(dtype=weight_dtype)
+
+                    #print("encoder_hidden_states shape:", encoder_hidden_states.shape)  # should be [B, 77, 768]
+                    #print("conditioning_values shape:", conditioning_values.shape)      # should be [B, 512]
+
                     
                     up_block_res_samples, _ = controlnet(
                         noisy_latents,

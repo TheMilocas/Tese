@@ -1648,8 +1648,7 @@ def main(args):
                     #print("encoder_hidden_states shape:", encoder_hidden_states.shape)  # should be [B, 77, 768]
                     #print("conditioning_values shape:", conditioning_values.shape)      # should be [B, 512]
 
-                    
-                    up_block_res_samples, _ = controlnet(
+                    mid_block_res_sample, up_block_res_samples = controlnet(
                         noisy_latents,
                         timesteps,
                         encoder_hidden_states=encoder_hidden_states,
@@ -1657,11 +1656,16 @@ def main(args):
                         return_dict=False,
                     )
                     
+                    up_block_res_samples = tuple(up_block_res_samples)[::-1]  # reverse the order
+                    for i, t in enumerate(up_block_res_samples):
+                        print(f"Residual {i} shape: {t.shape}")
+                    # Predict the noise residual
                     model_pred = unet(
                         noisy_latents,
                         timesteps,
                         encoder_hidden_states=encoder_hidden_states,
-                        up_block_additional_residuals=[
+                        mid_block_additional_residual=mid_block_res_sample.to(dtype=weight_dtype),
+                        down_block_additional_residuals=[
                             sample.to(dtype=weight_dtype) for sample in up_block_res_samples
                         ],
                     ).sample

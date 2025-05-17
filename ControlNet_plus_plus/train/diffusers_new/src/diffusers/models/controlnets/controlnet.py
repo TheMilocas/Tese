@@ -113,7 +113,8 @@ class NoSkipCrossAttnUpBlock2D(nn.Module):
         self.resnets = nn.ModuleList()
         self.attentions = nn.ModuleList()
         self.upsamplers = nn.ModuleList()
-
+        self.has_cross_attention = True
+        
         for i in range(num_layers):
             resnet_in_channels = in_channels if i == 0 else out_channels
             self.resnets.append(
@@ -145,11 +146,10 @@ class NoSkipCrossAttnUpBlock2D(nn.Module):
                 Upsample2D(out_channels, use_conv=True, out_channels=out_channels)
             )
 
-    def forward(self, hidden_states, temb=None, encoder_hidden_states=None, **kwargs):
+    def forward(self, hidden_states, temb=None, encoder_hidden_states: Optional[torch.Tensor]=None, **kwargs):
+        
         for resnet, attn in zip(self.resnets, self.attentions):
             hidden_states = resnet(hidden_states, temb)
-            print(">> attn input hidden_states:", hidden_states.shape)
-            print(">> attn input encoder_hidden_states:", encoder_hidden_states.shape)
             hidden_states = attn(hidden_states, encoder_hidden_states).sample
 
         for upsample in self.upsamplers:
@@ -480,7 +480,7 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
             target_shape=target_shape
         )
 
-        #print(self.controlnet_cond_embedding.parameters())
+        print(self.controlnet_cond_embedding.parameters())
         
         if isinstance(only_cross_attention, bool):
             only_cross_attention = [only_cross_attention] * len(up_block_types)
@@ -579,16 +579,22 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
         
             self.up_blocks.append(up_block)
             
-            for _ in range(layers_per_block):
-                #print(controlnet_block)
-                controlnet_block = nn.Conv2d(output_channels, output_channels, kernel_size=1)
-                controlnet_block = zero_module(controlnet_block)
-                self.controlnet_up_blocks.append(controlnet_block)
+            controlnet_block = nn.Conv2d(output_channels, output_channels, kernel_size=1)
+            controlnet_block = zero_module(controlnet_block)
+            self.controlnet_up_blocks.append(controlnet_block)
+            
+            # for _ in range(layers_per_block):
+            #     #print(controlnet_block)
+            #     controlnet_block = nn.Conv2d(output_channels, output_channels, kernel_size=1)
+            #     controlnet_block = zero_module(controlnet_block)
+            #     self.controlnet_up_blocks.append(controlnet_block)
 
-            if not is_final_block:
-                controlnet_block = nn.Conv2d(output_channels, output_channels, kernel_size=1)
-                controlnet_block = zero_module(controlnet_block)
-                self.controlnet_up_blocks.append(controlnet_block)
+            # if not is_final_block:
+            #     controlnet_block = nn.Conv2d(output_channels, output_channels, kernel_size=1)
+            #     controlnet_block = zero_module(controlnet_block)
+            #     self.controlnet_up_blocks.append(controlnet_block)
+
+        print(self.controlnet_up_blocks)
     
     @classmethod
     def from_unet(
@@ -927,7 +933,7 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
         if attention_mask is not None:
             attention_mask = (1 - attention_mask.to(sample.dtype)) * -10000.0
             attention_mask = attention_mask.unsqueeze(1)
-        print(f"encoder_hidden_states shape: {encoder_hidden_states.shape}")
+        #print(f"encoder_hidden_states shape: {encoder_hidden_states.shape}")
 
         # 1. time
         timesteps = timestep
@@ -1008,6 +1014,7 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
         #print(f"ControlNet condition shape: {controlnet_cond.shape}")
 
         sample = sample + controlnet_cond
+        #print(f"After all shape: {sample.shape}")
         
         # 3. Mid block
         if self.mid_block is not None:
@@ -1022,16 +1029,17 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
             else:
                 sample = self.mid_block(sample, emb)
 
+        #print(f"sample chape before midblock:{sample.shape}")
         mid_block_res_sample = self.controlnet_mid_block(sample)
         #print(f"Mid block output shape: {mid_block_res_sample.shape}")
-
+        
         # 4. Up blocks processing
-        up_block_res_samples = (sample,)
-
+        up_block_res_samples = ()
+        
         for upsample_block in self.up_blocks:
             # Process through up block
             if hasattr(upsample_block, "has_cross_attention") and upsample_block.has_cross_attention:
-                sample, res_samples = upsample_block(
+                sample, _ = upsample_block(
                     hidden_states=sample,
                     res_hidden_states_tuple=(),
                     temb=emb,
@@ -1040,23 +1048,23 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
                     cross_attention_kwargs=cross_attention_kwargs,
                 )
             else:
-                sample, res_samples = upsample_block(
+                sample, _ = upsample_block(
                     hidden_states=sample,
                     res_hidden_states_tuple=(),
                     temb=emb,
                 )
             #print(f"Output shape: {sample.shape}")
-            up_block_res_samples += res_samples
+            up_block_res_samples += (sample,)
             # Apply controlnet block
 
+        controlnet_up_block_res_samples = ()
+        
         for up_block_res_sample, controlnet_block in zip(up_block_res_samples, self.controlnet_up_blocks):
             up_block_res_sample = controlnet_block(up_block_res_sample)
             controlnet_up_block_res_samples = controlnet_up_block_res_samples + (up_block_res_sample,)
 
         up_block_res_samples = controlnet_up_block_res_samples
-
-        mid_block_res_sample = self.controlnet_mid_block(sample)
-            
+        
         # 5. Scaling
         if guess_mode and not self.config.global_pool_conditions:
             scales = torch.logspace(-1, 0, len(up_block_res_samples) + 1, device=sample.device)
@@ -1072,13 +1080,13 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
                 torch.mean(sample, dim=(2, 3), keepdim=True) for sample in up_block_res_samples
             ]
             mid_block_res_sample = torch.mean(mid_block_res_sample, dim=(2, 3), keepdim=True)
-    
+        
         if not return_dict:
-            return (up_block_res_samples, mid_block_res_sample)
+            return (mid_block_res_sample, up_block_res_samples)
 
         return ControlNetOutput(
-            up_block_res_samples=up_block_res_samples,
-            mid_block_res_sample=mid_block_res_sample
+            mid_block_res_sample=mid_block_res_sample,
+            up_block_res_samples=up_block_res_samples            
         )
 
 

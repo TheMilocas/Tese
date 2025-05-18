@@ -391,7 +391,6 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
                 resnet_time_scale_shift=resnet_time_scale_shift,
             )
             self.down_blocks.append(down_block)
-            #print("Down block types used:", down_block_types)
 
             for _ in range(layers_per_block):
                 controlnet_block = nn.Conv2d(output_channel, output_channel, kernel_size=1)
@@ -792,15 +791,10 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
         emb = emb + aug_emb if aug_emb is not None else emb
 
         # 2. pre-process
-        #print(f"Input sample shape: {sample.shape}")
         sample = self.conv_in(sample)
-        #print(f"After conv_in shape: {sample.shape}")
-        
+
         controlnet_cond = self.controlnet_cond_embedding(controlnet_cond)
-        #print(f"ControlNet condition shape: {controlnet_cond.shape}")
-        
         sample = sample + controlnet_cond
-        #print(f"After all shape: {sample.shape}")
 
         # 3. down
         down_block_res_samples = (sample,)
@@ -816,11 +810,6 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
             else:
                 sample, res_samples = downsample_block(hidden_states=sample, temb=emb)
 
-            print(f"[DEBUG] downsample_block: {downsample_block.__class__.__name__}")
-            print(f"[DEBUG] res_samples is a {type(res_samples)} of length {len(res_samples)}")
-            for i, res in enumerate(res_samples):
-                print(f"    res_samples[{i}] shape: {res.shape}")
-                
             down_block_res_samples += res_samples
 
         # 4. mid
@@ -836,19 +825,21 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
             else:
                 sample = self.mid_block(sample, emb)
 
-        
         # 5. Control net blocks
-        
+
         controlnet_down_block_res_samples = ()
 
         for down_block_res_sample, controlnet_block in zip(down_block_res_samples, self.controlnet_down_blocks):
             down_block_res_sample = controlnet_block(down_block_res_sample)
             controlnet_down_block_res_samples = controlnet_down_block_res_samples + (down_block_res_sample,)
-            #print(f"down block res samples: {down_block_res_sample.shape}")
+            print(f"down block res samples: {down_block_res_sample.shape}")
         down_block_res_samples = controlnet_down_block_res_samples
 
         mid_block_res_sample = self.controlnet_mid_block(sample)
-        #print(f"Mid block output shape: {mid_block_res_sample.shape}")
+
+        print(f"down block res samples at the end (size): {down_block_res_sample.size}")
+        print(f"down block res samples at the end (shape first block): {down_block_res_sample[0].shape}")
+        print(f"mid block res samples at the end: {mid_block_res_sample.shape}")
         
         # 6. scaling
         if guess_mode and not self.config.global_pool_conditions:
@@ -865,21 +856,7 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
                 torch.mean(sample, dim=(2, 3), keepdim=True) for sample in down_block_res_samples
             ]
             mid_block_res_sample = torch.mean(mid_block_res_sample, dim=(2, 3), keepdim=True)
-            
-        # print(f"down block res samples lenght: {len(down_block_res_samples)}")
-        # print(f"down block res samples [0]: {down_block_res_samples[0].shape}")
-        # print(f"down block res samples [1]: {down_block_res_samples[1].shape}")
-        # print(f"down block res samples [2]: {down_block_res_samples[2].shape}")
-        # print(f"down block res samples [3]: {down_block_res_samples[3].shape}")
-        # print(f"down block res samples [4]: {down_block_res_samples[4].shape}")
-        # print(f"down block res samples [5]: {down_block_res_samples[5].shape}")
-        # print(f"down block res samples [6]: {down_block_res_samples[6].shape}")
-        # print(f"down block res samples [7]: {down_block_res_samples[7].shape}")
-        # print(f"down block res samples [8]: {down_block_res_samples[8].shape}")
-        # print(f"down block res samples [9]: {down_block_res_samples[9].shape}")
-        # print(f"down block res samples [10]: {down_block_res_samples[10].shape}")
-        # print(f"down block res samples [11]: {down_block_res_samples[11].shape}")
-        
+
         if not return_dict:
             return (down_block_res_samples, mid_block_res_sample)
         

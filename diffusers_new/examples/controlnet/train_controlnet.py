@@ -1060,6 +1060,10 @@ def main(args):
                     return_dict=False,
                 )
 
+                print(f"mid_block shape: {mid_block_res_sample.shape}")
+                for i, t in enumerate(down_block_res_samples):
+                    print(f"Residual {i} shape: {t.shape}")
+                
                 # Predict the noise residual
                 model_pred = unet(
                     noisy_latents,

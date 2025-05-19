@@ -1656,7 +1656,7 @@ def main(args):
                         return_dict=False,
                     )
                     
-                    up_block_res_samples = tuple(up_block_res_samples)[::-1]  # reverse the order
+                    up_block_res_samples = tuple(reversed(up_block_res_samples))  # reverse the order
                     print(f"mid_block shape: {mid_block_res_sample.shape}")
                     for i, t in enumerate(up_block_res_samples):
                         print(f"Residual {i} shape: {t.shape}")

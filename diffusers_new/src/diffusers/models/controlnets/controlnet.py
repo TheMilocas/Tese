@@ -369,7 +369,7 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
             input_channel = output_channel
             output_channel = block_out_channels[i]
             is_final_block = i == len(block_out_channels) - 1
-
+            
             down_block = get_down_block(
                 down_block_type,
                 num_layers=layers_per_block,
@@ -397,12 +397,17 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
                 controlnet_block = nn.Conv2d(output_channel, output_channel, kernel_size=1)
                 controlnet_block = zero_module(controlnet_block)
                 self.controlnet_down_blocks.append(controlnet_block)
-
+                print(controlnet_block)
+                
             if not is_final_block:
                 controlnet_block = nn.Conv2d(output_channel, output_channel, kernel_size=1)
                 controlnet_block = zero_module(controlnet_block)
                 self.controlnet_down_blocks.append(controlnet_block)
-
+                print(controlnet_block)
+                
+        # for i, block in enumerate(self.controlnet_down_blocks):
+        #     print(f"[DEBUG] ControlNet down_block {i}: in_channels = {block.in_channels}")
+        
         # mid
         mid_block_channel = block_out_channels[-1]
 
@@ -440,6 +445,8 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
         else:
             raise ValueError(f"unknown mid_block_type : {mid_block_type}")
 
+        
+            
     @classmethod
     def from_unet(
         cls,

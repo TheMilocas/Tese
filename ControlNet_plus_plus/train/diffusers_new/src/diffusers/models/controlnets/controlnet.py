@@ -557,8 +557,6 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
         controlnet_block = zero_module(controlnet_block)
         self.controlnet_mid_block = controlnet_block
         
-        #print("[DEBUG] mid_block expected in_channels =", block_out_channels[-1])
-        
         if mid_block_type == "UNetMidBlock2DCrossAttn":
             self.mid_block = UNetMidBlock2DCrossAttn(
                 transformer_layers_per_block=transformer_layers_per_block[-1],
@@ -593,12 +591,15 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
         self.up_blocks = nn.ModuleList()
         self.controlnet_up_blocks = nn.ModuleList([])
 
-        #print(block_out_channels)
+        output_channel = block_out_channels[-1]
+        
+        controlnet_block = nn.Conv2d(output_channel, output_channel, kernel_size=1)
+        controlnet_block = zero_module(controlnet_block)
+        self.controlnet_up_blocks.append(controlnet_block)
 
         for i, up_block_type in enumerate(up_block_types):
             input_channels = block_out_channels[-i - 1]
             output_channels = block_out_channels[-i - 2] if i != len(up_block_types) - 1 else block_out_channels[0]
-            add_upsample = i != len(up_block_types) - 1
             is_final_block = i == len(block_out_channels) - 1
             
             if up_block_type == "CrossAttnUpBlock2D":
@@ -617,7 +618,6 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
                     resnet_groups=norm_num_groups,
                     use_linear_projection=use_linear_projection,
                     upcast_attention=upcast_attention,
-                    add_upsample=not is_final_block,
                 )
             elif up_block_type == "UpBlock2D":
                 up_block = NoSkipUpBlock2D(
@@ -630,19 +630,13 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
                     dropout=0.0,
                     resnet_act_fn=act_fn,
                     resnet_groups=norm_num_groups,
-                    add_upsample=not is_final_block,
                 )
             else:
                 raise ValueError(f"Unsupported up block type: {up_block_type}")
         
             self.up_blocks.append(up_block)
             
-            # controlnet_block = nn.Conv2d(output_channels, output_channels, kernel_size=1)
-            # controlnet_block = zero_module(controlnet_block)
-            # self.controlnet_up_blocks.append(controlnet_block)
-            
             for _ in range(layers_per_block):
-                #print(controlnet_block)
                 controlnet_block = nn.Conv2d(output_channels, output_channels, kernel_size=1)
                 controlnet_block = zero_module(controlnet_block)
                 self.controlnet_up_blocks.append(controlnet_block)
@@ -652,8 +646,8 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
                 controlnet_block = zero_module(controlnet_block)
                 self.controlnet_up_blocks.append(controlnet_block)
 
-        for i, block in enumerate(self.controlnet_up_blocks):
-            print(f"[DEBUG] ControlNet up_block {i}: in_channels = {block.in_channels}")
+        # for i, block in enumerate(self.controlnet_up_blocks):
+        #     print(f"[DEBUG] ControlNet up_block {i}: in_channels = {block.in_channels}")
 
     @classmethod
     def from_unet(
@@ -1100,16 +1094,16 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
                     hidden_states=sample,
                     temb=emb,
                 )
-            print(f"[DEBUG] upsample_block: {upsample_block.__class__.__name__}")
-            print(f"[DEBUG] res_samples is a {type(res_samples)} of length {len(res_samples)}")
-            for i, res in enumerate(res_samples):
-                print(f"    res_samples[{i}] shape: {res.shape}")
+            #print(f"[DEBUG] upsample_block: {upsample_block.__class__.__name__}")
+            #print(f"[DEBUG] res_samples is a {type(res_samples)} of length {len(res_samples)}")
+            # for i, res in enumerate(res_samples):
+            #     print(f"res_samples[{i}] shape: {res.shape}")
             up_block_res_samples += res_samples
 
         controlnet_up_block_res_samples = ()
         
-        for i, tensor in enumerate(up_block_res_samples):
-            print(f"[DEBUG] up_block_res_samples[{i}]: shape = {tensor.shape}")
+        # for i, tensor in enumerate(up_block_res_samples):
+        #     print(f"[DEBUG] up_block_res_samples[{i}]: shape = {tensor.shape}")
             
         for up_block_res_sample, controlnet_block in zip(up_block_res_samples, self.controlnet_up_blocks):
             up_block_res_sample = controlnet_block(up_block_res_sample)

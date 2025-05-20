@@ -263,7 +263,7 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
             time_embed_dim,
             act_fn=act_fn,
         )
-
+        
         if encoder_hid_dim_type is None and encoder_hid_dim is not None:
             encoder_hid_dim_type = "text_proj"
             self.register_to_config(encoder_hid_dim_type=encoder_hid_dim_type)
@@ -359,6 +359,7 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
             num_attention_heads = (num_attention_heads,) * len(down_block_types)
 
         # down
+            
         output_channel = block_out_channels[0]
 
         controlnet_block = nn.Conv2d(output_channel, output_channel, kernel_size=1)
@@ -369,6 +370,8 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
             input_channel = output_channel
             output_channel = block_out_channels[i]
             is_final_block = i == len(block_out_channels) - 1
+            print(f"input_channel: {input_channel}")
+            print(f"output_channel: {output_channel}")
             
             down_block = get_down_block(
                 down_block_type,
@@ -392,21 +395,21 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
             )
             self.down_blocks.append(down_block)
             #print("Down block types used:", down_block_types)
-
+            
             for _ in range(layers_per_block):
                 controlnet_block = nn.Conv2d(output_channel, output_channel, kernel_size=1)
                 controlnet_block = zero_module(controlnet_block)
                 self.controlnet_down_blocks.append(controlnet_block)
-                print(controlnet_block)
+                print(f"Added block (from layers_per_block): {controlnet_block}")
                 
             if not is_final_block:
                 controlnet_block = nn.Conv2d(output_channel, output_channel, kernel_size=1)
                 controlnet_block = zero_module(controlnet_block)
                 self.controlnet_down_blocks.append(controlnet_block)
-                print(controlnet_block)
+                print(f"Added block (extra): {controlnet_block}")
                 
-        # for i, block in enumerate(self.controlnet_down_blocks):
-        #     print(f"[DEBUG] ControlNet down_block {i}: in_channels = {block.in_channels}")
+        # for i, layer in enumerate(self.controlnet_down_blocks):
+        #     print(f"[DEBUG] controlnet_up_blocks[{i}]: {layer.in_channels}")
         
         # mid
         mid_block_channel = block_out_channels[-1]
@@ -445,7 +448,9 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
         else:
             raise ValueError(f"unknown mid_block_type : {mid_block_type}")
 
-        
+        print("\nFinal controlnet_down_blocks:")
+        for i, block in enumerate(self.controlnet_down_blocks):
+            print(f"[{i}] {block}")
             
     @classmethod
     def from_unet(
@@ -802,7 +807,7 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
         #print(f"Input sample shape: {sample.shape}")
         sample = self.conv_in(sample)
         #print(f"After conv_in shape: {sample.shape}")
-        
+        print(controlnet_cond.shape)
         controlnet_cond = self.controlnet_cond_embedding(controlnet_cond)
         #print(f"ControlNet condition shape: {controlnet_cond.shape}")
         

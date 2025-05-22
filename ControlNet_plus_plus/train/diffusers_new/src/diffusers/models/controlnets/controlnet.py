@@ -567,8 +567,8 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
         if isinstance(num_attention_heads, int):
             num_attention_heads = (num_attention_heads,) * len(up_block_types)
 
-        # for i in range(len(block_out_channels)):
-        #     print(f"[DEBUG] block_out_channels[{i}]: {block_out_channels[i]}")
+        for i in range(len(block_out_channels)):
+            print(f"[DEBUG] block_out_channels[{i}]: {block_out_channels[i]}")
         
         # mid
         mid_block_channel = block_out_channels[0]
@@ -620,8 +620,8 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
             output_channel = block_out_channels[i + 1] if i + 1 < len(block_out_channels) else block_out_channels[i]
             is_final_block = i == len(block_out_channels) - 1
             add_extra_block = i != 0
-            # print(f"input_channel: {input_channel}")
-            # print(f"output_channel: {output_channel}")
+            print(f"input_channel: {input_channel}")
+            print(f"output_channel: {output_channel}")
             
             if up_block_type == "CrossAttnUpBlock2D":
                 up_block = NoSkipCrossAttnUpBlock2D(
@@ -663,21 +663,21 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
                 controlnet_block = nn.Conv2d(input_channel, input_channel, kernel_size=1)
                 controlnet_block = zero_module(controlnet_block)
                 self.controlnet_up_blocks.append(controlnet_block)
-                # print(f"Added block (from layers_per_block): {controlnet_block}")
+                print(f"Added block (from layers_per_block): {controlnet_block}")
 
             if add_extra_block:
                 controlnet_block = nn.Conv2d(input_channel, input_channel, kernel_size=1)
                 controlnet_block = zero_module(controlnet_block)
                 self.controlnet_up_blocks.append(controlnet_block)
-                # print(f"Added block (extra): {controlnet_block}")
+                print(f"Added block (extra): {controlnet_block}")
               
         controlnet_block = nn.Conv2d(output_channel, output_channel, kernel_size=1)
         controlnet_block = zero_module(controlnet_block)
         self.controlnet_up_blocks.append(controlnet_block)  
 
-        # print("\nFinal controlnet_up_blocks:")
-        # for i, block in enumerate(self.controlnet_up_blocks):
-        #     print(f"[{i}] {block}")
+        print("\nFinal controlnet_up_blocks:")
+        for i, block in enumerate(self.controlnet_up_blocks):
+            print(f"[{i}] {block}")
 
 
 
@@ -757,6 +757,19 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
             mid_block_channel=mid_block_channel,
         )
 
+        def compare_modules(control_mod, unet_mod, name):
+            control_state = control_mod.state_dict()
+            unet_state = unet_mod.state_dict()
+            print(f"\n Comparing `{name}`")
+            for k in control_state:
+                if k in unet_state:
+                    if control_state[k].shape == unet_state[k].shape:
+                        print(f"  ✓ {k}: shape {control_state[k].shape}")
+                    else:
+                        print(f"  ⚠ {k}: shape mismatch - ControlNet: {control_state[k].shape}, UNet: {unet_state[k].shape}")
+                else:
+                    print(f"  ✘ {k}: not found in UNet")
+        
         if load_weights_from_unet:
             #controlnet.conv_in.load_state_dict(unet.conv_in.state_dict())
             controlnet.time_proj.load_state_dict(unet.time_proj.state_dict())
@@ -802,6 +815,10 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
             #controlnet.up_blocks.load_state_dict(unet.up_blocks.state_dict())
             controlnet.mid_block.load_state_dict(unet.mid_block.state_dict())
 
+        # if hasattr(controlnet, "up_blocks") and hasattr(unet, "up_blocks"):
+        #         for i, (c_blk, u_blk) in enumerate(zip(controlnet.up_blocks, unet.up_blocks)):
+        #             compare_modules(c_blk, u_blk, f"up_blocks[{i}]")
+        
         return controlnet
 
     @property
@@ -1109,7 +1126,7 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
         #print(f"Mid block output shape: {mid_block_res_sample.shape}")
         
         # 4. up
-        up_block_res_samples = (sample,)
+        up_block_res_samples = [sample]
         for upsample_block in self.up_blocks:
             if hasattr(upsample_block, "has_cross_attention") and upsample_block.has_cross_attention:
                 sample, res_samples = upsample_block(
@@ -1124,18 +1141,19 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
                     hidden_states=sample,
                     temb=emb,
                 )
-            #print(f"[DEBUG] upsample_block: {upsample_block.__class__.__name__}")
-            #print(f"[DEBUG] res_samples is a {type(res_samples)} of length {len(res_samples)}")
-            # for i, res in enumerate(res_samples):
-            #     print(f"res_samples[{i}] shape: {res.shape}")
-            up_block_res_samples += res_samples
+            print(f"[DEBUG] upsample_block: {upsample_block.__class__.__name__}")
+            print(f"[DEBUG] res_samples is a {type(res_samples)} of length {len(res_samples)}")
+            for i, res in enumerate(res_samples):
+                print(f"res_samples[{i}] shape: {res.shape}")
+            res_samples_sorted = sorted(res_samples, key=lambda x: x.shape[-1])
+            up_block_res_samples.extend(res_samples_sorted)
 
         controlnet_up_block_res_samples = ()
-        
+        print("")
         for i, tensor in enumerate(up_block_res_samples):
             print(f"[DEBUG] up_block_res_samples[{i}]: shape = {tensor.shape}")
             
-        for up_block_res_sample, controlnet_block in zip(reversed(up_block_res_samples), self.controlnet_up_blocks):
+        for up_block_res_sample, controlnet_block in zip(up_block_res_samples, self.controlnet_up_blocks):
             up_block_res_sample = controlnet_block(up_block_res_sample)
             controlnet_up_block_res_samples = controlnet_up_block_res_samples + (up_block_res_sample,)
         

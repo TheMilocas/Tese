@@ -394,7 +394,7 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
                 resnet_time_scale_shift=resnet_time_scale_shift,
             )
             self.down_blocks.append(down_block)
-            #print("Down block types used:", down_block_types)
+            # print("Down block types used:", down_block_types)
             
             for _ in range(layers_per_block):
                 controlnet_block = nn.Conv2d(output_channel, output_channel, kernel_size=1)
@@ -408,8 +408,8 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
                 self.controlnet_down_blocks.append(controlnet_block)
                 print(f"Added block (extra): {controlnet_block}")
                 
-        # for i, layer in enumerate(self.controlnet_down_blocks):
-        #     print(f"[DEBUG] controlnet_up_blocks[{i}]: {layer.in_channels}")
+        for i, layer in enumerate(self.controlnet_down_blocks):
+            print(f"[DEBUG] controlnet_up_blocks[{i}]: {layer.in_channels}")
         
         # mid
         mid_block_channel = block_out_channels[-1]
@@ -512,6 +512,19 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
             conditioning_channels=conditioning_channels,
         )
 
+        def compare_modules(control_mod, unet_mod, name):
+            control_state = control_mod.state_dict()
+            unet_state = unet_mod.state_dict()
+            print(f"\n Comparing `{name}`")
+            for k in control_state:
+                if k in unet_state:
+                    if control_state[k].shape == unet_state[k].shape:
+                        print(f"  ✓ {k}: shape {control_state[k].shape}")
+                    else:
+                        print(f"  ⚠ {k}: shape mismatch - ControlNet: {control_state[k].shape}, UNet: {unet_state[k].shape}")
+                else:
+                    print(f"  ✘ {k}: not found in UNet")
+        
         if load_weights_from_unet:
             controlnet.conv_in.load_state_dict(unet.conv_in.state_dict())
             controlnet.time_proj.load_state_dict(unet.time_proj.state_dict())
@@ -526,6 +539,9 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
             controlnet.down_blocks.load_state_dict(unet.down_blocks.state_dict())
             controlnet.mid_block.load_state_dict(unet.mid_block.state_dict())
 
+        # if hasattr(controlnet, "down_blocks") and hasattr(unet, "down_blocks"):
+        #     compare_modules(controlnet.down_blocks, unet.down_blocks, "down_blocks")
+        
         return controlnet
 
     @property
@@ -807,7 +823,7 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
         #print(f"Input sample shape: {sample.shape}")
         sample = self.conv_in(sample)
         #print(f"After conv_in shape: {sample.shape}")
-        print(controlnet_cond.shape)
+        #print(controlnet_cond.shape)
         controlnet_cond = self.controlnet_cond_embedding(controlnet_cond)
         #print(f"ControlNet condition shape: {controlnet_cond.shape}")
         
@@ -835,6 +851,9 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
                 
             down_block_res_samples += res_samples
 
+        for i, tensor in enumerate(down_block_res_samples):
+            print(f"[DEBUG] down_block_res_samples[{i}]: shape = {tensor.shape}")
+        
         # 4. mid
         if self.mid_block is not None:
             if hasattr(self.mid_block, "has_cross_attention") and self.mid_block.has_cross_attention:
@@ -877,20 +896,6 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
                 torch.mean(sample, dim=(2, 3), keepdim=True) for sample in down_block_res_samples
             ]
             mid_block_res_sample = torch.mean(mid_block_res_sample, dim=(2, 3), keepdim=True)
-            
-        # print(f"down block res samples lenght: {len(down_block_res_samples)}")
-        # print(f"down block res samples [0]: {down_block_res_samples[0].shape}")
-        # print(f"down block res samples [1]: {down_block_res_samples[1].shape}")
-        # print(f"down block res samples [2]: {down_block_res_samples[2].shape}")
-        # print(f"down block res samples [3]: {down_block_res_samples[3].shape}")
-        # print(f"down block res samples [4]: {down_block_res_samples[4].shape}")
-        # print(f"down block res samples [5]: {down_block_res_samples[5].shape}")
-        # print(f"down block res samples [6]: {down_block_res_samples[6].shape}")
-        # print(f"down block res samples [7]: {down_block_res_samples[7].shape}")
-        # print(f"down block res samples [8]: {down_block_res_samples[8].shape}")
-        # print(f"down block res samples [9]: {down_block_res_samples[9].shape}")
-        # print(f"down block res samples [10]: {down_block_res_samples[10].shape}")
-        # print(f"down block res samples [11]: {down_block_res_samples[11].shape}")
         
         if not return_dict:
             return (down_block_res_samples, mid_block_res_sample)

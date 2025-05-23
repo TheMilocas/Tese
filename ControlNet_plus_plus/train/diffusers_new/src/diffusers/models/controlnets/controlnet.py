@@ -620,8 +620,8 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
             output_channel = block_out_channels[i + 1] if i + 1 < len(block_out_channels) else block_out_channels[i]
             is_final_block = i == len(block_out_channels) - 1
             add_extra_block = i != 0
-            print(f"input_channel: {input_channel}")
-            print(f"output_channel: {output_channel}")
+            # print(f"input_channel: {input_channel}")
+            # print(f"output_channel: {output_channel}")
             
             if up_block_type == "CrossAttnUpBlock2D":
                 up_block = NoSkipCrossAttnUpBlock2D(
@@ -646,7 +646,7 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
                     in_channels=input_channel,
                     out_channels=output_channel,
                     temb_channels=time_embed_dim,
-                    num_layers=layers_per_block,
+                    num_layers=layers_per_block + 1,
                     resnet_eps=norm_eps,
                     resnet_time_scale_shift=resnet_time_scale_shift,
                     dropout=0.0,
@@ -663,21 +663,21 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
                 controlnet_block = nn.Conv2d(input_channel, input_channel, kernel_size=1)
                 controlnet_block = zero_module(controlnet_block)
                 self.controlnet_up_blocks.append(controlnet_block)
-                print(f"Added block (from layers_per_block): {controlnet_block}")
+                # print(f"Added block (from layers_per_block): {controlnet_block}")
 
             if add_extra_block:
                 controlnet_block = nn.Conv2d(input_channel, input_channel, kernel_size=1)
                 controlnet_block = zero_module(controlnet_block)
                 self.controlnet_up_blocks.append(controlnet_block)
-                print(f"Added block (extra): {controlnet_block}")
+                # print(f"Added block (extra): {controlnet_block}")
               
         controlnet_block = nn.Conv2d(output_channel, output_channel, kernel_size=1)
         controlnet_block = zero_module(controlnet_block)
         self.controlnet_up_blocks.append(controlnet_block)  
 
-        print("\nFinal controlnet_up_blocks:")
-        for i, block in enumerate(self.controlnet_up_blocks):
-            print(f"[{i}] {block}")
+        # print("\nFinal controlnet_up_blocks:")
+        # for i, block in enumerate(self.controlnet_up_blocks):
+        #     print(f"[{i}] {block}")
 
 
 

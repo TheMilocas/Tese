@@ -93,8 +93,6 @@ class NoSkipUpBlock2D(nn.Module):
             *args,
             **kwargs,
         ) -> torch.Tensor:
-
-        output_states = ()
         
         for resnet in self.resnets:
             hidden_states = resnet(hidden_states, temb)
@@ -103,9 +101,8 @@ class NoSkipUpBlock2D(nn.Module):
         if self.upsamplers is not None:
             for upsampler in self.upsamplers:
                 hidden_states = upsampler(hidden_states, upsample_size)
-                output_states = output_states + (hidden_states,)
 
-        return hidden_states, output_states 
+        return hidden_states
 
 
 class NoSkipCrossAttnUpBlock2D(nn.Module):
@@ -192,8 +189,6 @@ class NoSkipCrossAttnUpBlock2D(nn.Module):
         attention_mask: Optional[torch.Tensor] = None,
         encoder_attention_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-
-        output_states = ()
         
         for resnet, attn in zip(self.resnets, self.attentions):
             hidden_states = resnet(hidden_states, temb)
@@ -206,14 +201,11 @@ class NoSkipCrossAttnUpBlock2D(nn.Module):
                     return_dict=False,
                 )[0]
             
-            output_states = output_states + (hidden_states,)
-            
         if self.upsamplers is not None:
             for upsample in self.upsamplers:
                 hidden_states = upsample(hidden_states, upsample_size)
-                output_states = output_states + (hidden_states,)
             
-        return hidden_states, output_states
+        return hidden_states
 
 @dataclass
 class ControlNetOutput(BaseOutput):
@@ -551,66 +543,94 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
 
         for i in range(len(block_out_channels)):
             print(f"[DEBUG] block_out_channels[{i}]: {block_out_channels[i]}")
+
+        self.up_blocks = nn.ModuleList([])
+        self.controlnet_up_blocks = nn.ModuleList([])
         
         # mid
-        if mid_block_type is None:
-            self.mid_block = None
-        else:
-            self.mid_block = UNetMidBlock2D(
-                in_channels=block_out_channels[-1],
+        mid_block_channel = block_out_channels[-1]
+        
+        if mid_block_type == "UNetMidBlock2DCrossAttn":
+            self.mid_block = UNetMidBlock2DCrossAttn(
+                transformer_layers_per_block=transformer_layers_per_block[-1],
+                in_channels=mid_block_channel,
                 temb_channels=time_embed_dim,
-                dropout=dropout,
                 resnet_eps=norm_eps,
                 resnet_act_fn=act_fn,
                 output_scale_factor=mid_block_scale_factor,
                 resnet_time_scale_shift=resnet_time_scale_shift,
-                attention_head_dim=attention_head_dim if attention_head_dim is not None else block_out_channels[-1],
+                cross_attention_dim=cross_attention_dim,
+                num_attention_heads=num_attention_heads[-1],
                 resnet_groups=norm_num_groups,
-                attn_groups=attn_norm_num_groups,
-                add_attention=add_attention,
+                use_linear_projection=use_linear_projection,
+                upcast_attention=upcast_attention,
             )
-
+        elif mid_block_type == "UNetMidBlock2D":
+            self.mid_block = UNetMidBlock2D(
+                in_channels=mid_block_channel,
+                temb_channels=time_embed_dim,
+                num_layers=0,
+                resnet_eps=norm_eps,
+                resnet_act_fn=act_fn,
+                output_scale_factor=mid_block_scale_factor,
+                resnet_groups=norm_num_groups,
+                resnet_time_scale_shift=resnet_time_scale_shift,
+                add_attention=False,
+            )
+        else:
+            raise ValueError(f"unknown mid_block_type : {mid_block_type}")
+      
         # up
         reversed_block_out_channels = list(reversed(block_out_channels))
+        reversed_num_attention_heads = list(reversed(num_attention_heads))
+
         output_channel = reversed_block_out_channels[0]
+        
         for i, up_block_type in enumerate(up_block_types):
+            is_final_block = i == len(block_out_channels) - 1
+
+            prev_output_channel = output_channel
             output_channel = reversed_block_out_channels[i]
             input_channel = reversed_block_out_channels[min(i + 1, len(block_out_channels) - 1)]
 
-            is_final_block = i == len(block_out_channels) - 1
-            print(f"input_channel: {input_channel}")
-            print(f"output_channel: {output_channel}")
-            
+            if not is_final_block:
+                add_upsample = True
+            else:
+                add_upsample = False
+
+            add_extra_block = i != 0
+        
             if up_block_type == "CrossAttnUpBlock2D":
                 up_block = NoSkipCrossAttnUpBlock2D(
                     in_channels=input_channel,
                     out_channels=output_channel,
                     temb_channels=time_embed_dim,
-                    num_layers=layers_per_block,
+                    num_layers=layers_per_block + 1,
+                    transformer_layers_per_block=transformer_layers_per_block[i],
                     resnet_eps=norm_eps,
                     resnet_time_scale_shift=resnet_time_scale_shift,
                     dropout=0.0,
                     cross_attention_dim=cross_attention_dim,
-                    num_attention_heads=num_attention_heads[i],
-                    #attention_head_dim=attention_head_dim[i] if attention_head_dim[i] is not None else output_channel,
+                    num_attention_heads=reversed_num_attention_heads[i],
+                    # attention_head_dim=attention_head_dim[i] if attention_head_dim[i] is not None else output_channel,
                     resnet_act_fn=act_fn,
                     resnet_groups=norm_num_groups,
                     use_linear_projection=use_linear_projection,
                     upcast_attention=upcast_attention,
-                    add_upsample=not is_final_block,
+                    add_upsample=add_upsample,
                 )
             elif up_block_type == "UpBlock2D":
                 up_block = NoSkipUpBlock2D(
                     in_channels=input_channel,
                     out_channels=output_channel,
                     temb_channels=time_embed_dim,
-                    num_layers=layers_per_block,
+                    num_layers=layers_per_block + 1,
                     resnet_eps=norm_eps,
                     resnet_time_scale_shift=resnet_time_scale_shift,
                     dropout=0.0,
                     resnet_act_fn=act_fn,
                     resnet_groups=norm_num_groups,
-                    add_upsample=not is_final_block,
+                    add_upsample=add_upsample,
                 )
             else:
                 raise ValueError(f"Unsupported up block type: {up_block_type}")
@@ -618,25 +638,24 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
             self.up_blocks.append(up_block)
             
             for _ in range(layers_per_block):
-                controlnet_block = nn.Conv2d(input_channel, input_channel, kernel_size=1)
+                controlnet_block = nn.Conv2d(output_channel, output_channel, kernel_size=1)
                 controlnet_block = zero_module(controlnet_block)
                 self.controlnet_up_blocks.append(controlnet_block)
                 print(f"Added block (from layers_per_block): {controlnet_block}")
 
             if add_extra_block:
-                controlnet_block = nn.Conv2d(input_channel, input_channel, kernel_size=1)
+                controlnet_block = nn.Conv2d(output_channel, output_channel, kernel_size=1)
                 controlnet_block = zero_module(controlnet_block)
                 self.controlnet_up_blocks.append(controlnet_block)
-                print(f"Added block (extra): {controlnet_block}")
-              
+                print(f"Added block (extra): {controlnet_block}")  
+
         controlnet_block = nn.Conv2d(output_channel, output_channel, kernel_size=1)
         controlnet_block = zero_module(controlnet_block)
-        self.controlnet_up_blocks.append(controlnet_block)  
-
+        self.controlnet_up_blocks.append(controlnet_block)
+        
         print("\nFinal controlnet_up_blocks:")
         for i, block in enumerate(self.controlnet_up_blocks):
             print(f"[{i}] {block}")
-
 
 
     @classmethod
@@ -773,9 +792,9 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
             #controlnet.up_blocks.load_state_dict(unet.up_blocks.state_dict())
             controlnet.mid_block.load_state_dict(unet.mid_block.state_dict())
 
-        if hasattr(controlnet, "up_blocks") and hasattr(unet, "up_blocks"):
-                for i, (c_blk, u_blk) in enumerate(zip(controlnet.up_blocks, unet.up_blocks)):
-                    compare_modules(c_blk, u_blk, f"up_blocks[{i}]")
+        # if hasattr(controlnet, "up_blocks") and hasattr(unet, "up_blocks"):
+        #         for i, (c_blk, u_blk) in enumerate(zip(controlnet.up_blocks, unet.up_blocks)):
+        #             compare_modules(c_blk, u_blk, f"up_blocks[{i}]")
         
         return controlnet
 
@@ -1085,26 +1104,34 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
         
         # 4. up
         up_block_res_samples = [sample]
-        for upsample_block in self.up_blocks:
+        for i, upsample_block in enumerate(self.up_blocks):
+            is_final_block = i == len(self.up_blocks) - 1
+
+            res_samples = down_block_res_samples[-len(upsample_block.resnets) :]
+            down_block_res_samples = down_block_res_samples[: -len(upsample_block.resnets)]
+
+            if not is_final_block and forward_upsample_size:
+                upsample_size = down_block_res_samples[-1].shape[2:]
+            
             if hasattr(upsample_block, "has_cross_attention") and upsample_block.has_cross_attention:
-                sample, res_samples = upsample_block(
+                sample = upsample_block(
                     hidden_states=sample,
                     temb=emb,
                     encoder_hidden_states=encoder_hidden_states,
                     attention_mask=attention_mask,
+                    upsample_size=upsample_size,
                     cross_attention_kwargs=cross_attention_kwargs,
                 )
             else:
-                sample, res_samples = upsample_block(
+                sample = upsample_block(
                     hidden_states=sample,
                     temb=emb,
+                    upsample_size=upsample_size,
                 )
             # print(f"[DEBUG] upsample_block: {upsample_block.__class__.__name__}")
             # print(f"[DEBUG] res_samples is a {type(res_samples)} of length {len(res_samples)}")
             # for i, res in enumerate(res_samples):
             #     print(f"res_samples[{i}] shape: {res.shape}")
-            res_samples_sorted = sorted(res_samples, key=lambda x: x.shape[-1])
-            up_block_res_samples.extend(res_samples_sorted)
 
         controlnet_up_block_res_samples = ()
         print("")

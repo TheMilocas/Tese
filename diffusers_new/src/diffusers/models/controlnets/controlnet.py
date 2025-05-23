@@ -370,8 +370,8 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
             input_channel = output_channel
             output_channel = block_out_channels[i]
             is_final_block = i == len(block_out_channels) - 1
-            print(f"input_channel: {input_channel}")
-            print(f"output_channel: {output_channel}")
+            # print(f"input_channel: {input_channel}")
+            # print(f"output_channel: {output_channel}")
             
             down_block = get_down_block(
                 down_block_type,
@@ -448,9 +448,9 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
         else:
             raise ValueError(f"unknown mid_block_type : {mid_block_type}")
 
-        # print("\nFinal controlnet_down_blocks:")
-        # for i, block in enumerate(self.controlnet_down_blocks):
-        #     print(f"[{i}] {block}")
+        print("\nFinal controlnet_down_blocks:")
+        for i, block in enumerate(self.controlnet_down_blocks):
+            print(f"[{i}] {block}")
             
     @classmethod
     def from_unet(
@@ -844,15 +844,15 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
             else:
                 sample, res_samples = downsample_block(hidden_states=sample, temb=emb)
 
-            # print(f"[DEBUG] downsample_block: {downsample_block.__class__.__name__}")
-            # print(f"[DEBUG] res_samples is a {type(res_samples)} of length {len(res_samples)}")
-            # for i, res in enumerate(res_samples):
-            #     print(f"    res_samples[{i}] shape: {res.shape}")
+            print(f"[DEBUG] downsample_block: {downsample_block.__class__.__name__}")
+            print(f"[DEBUG] res_samples is a {type(res_samples)} of length {len(res_samples)}")
+            for i, res in enumerate(res_samples):
+                print(f"    res_samples[{i}] shape: {res.shape}")
                 
             down_block_res_samples += res_samples
 
-        # for i, tensor in enumerate(down_block_res_samples):
-        #     print(f"[DEBUG] down_block_res_samples[{i}]: shape = {tensor.shape}")
+        for i, tensor in enumerate(down_block_res_samples):
+            print(f"[DEBUG] down_block_res_samples[{i}]: shape = {tensor.shape}")
         
         # 4. mid
         if self.mid_block is not None:

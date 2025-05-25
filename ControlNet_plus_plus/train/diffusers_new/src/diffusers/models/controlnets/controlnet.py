@@ -663,21 +663,21 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
                 controlnet_block = nn.Conv2d(input_channel, input_channel, kernel_size=1)
                 controlnet_block = zero_module(controlnet_block)
                 self.controlnet_up_blocks.append(controlnet_block)
-                # print(f"Added block (from layers_per_block): {controlnet_block}")
+                print(f"Added block (from layers_per_block): {controlnet_block}")
 
             if add_extra_block:
                 controlnet_block = nn.Conv2d(input_channel, input_channel, kernel_size=1)
                 controlnet_block = zero_module(controlnet_block)
                 self.controlnet_up_blocks.append(controlnet_block)
-                # print(f"Added block (extra): {controlnet_block}")
+                print(f"Added block (extra): {controlnet_block}")
               
         controlnet_block = nn.Conv2d(output_channel, output_channel, kernel_size=1)
         controlnet_block = zero_module(controlnet_block)
         self.controlnet_up_blocks.append(controlnet_block)  
 
-        # print("\nFinal controlnet_up_blocks:")
-        # for i, block in enumerate(self.controlnet_up_blocks):
-        #     print(f"[{i}] {block}")
+        print("\nFinal controlnet_up_blocks:")
+        for i, block in enumerate(self.controlnet_up_blocks):
+            print(f"[{i}] {block}")
 
 
 

@@ -394,19 +394,18 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
                 resnet_time_scale_shift=resnet_time_scale_shift,
             )
             self.down_blocks.append(down_block)
-            # print("Down block types used:", down_block_types)
             
             for _ in range(layers_per_block):
                 controlnet_block = nn.Conv2d(output_channel, output_channel, kernel_size=1)
                 controlnet_block = zero_module(controlnet_block)
                 self.controlnet_down_blocks.append(controlnet_block)
-                # print(f"Added block (from layers_per_block): {controlnet_block}")
+                print(f"Added block (from layers_per_block): {controlnet_block}")
                 
             if not is_final_block:
                 controlnet_block = nn.Conv2d(output_channel, output_channel, kernel_size=1)
                 controlnet_block = zero_module(controlnet_block)
                 self.controlnet_down_blocks.append(controlnet_block)
-                # print(f"Added block (extra): {controlnet_block}")
+                print(f"Added block (extra): {controlnet_block}")
                 
         # for i, layer in enumerate(self.controlnet_down_blocks):
         #     print(f"[DEBUG] controlnet_up_blocks[{i}]: {layer.in_channels}")
@@ -447,7 +446,7 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
             )
         else:
             raise ValueError(f"unknown mid_block_type : {mid_block_type}")
-
+        
         print("\nFinal controlnet_down_blocks:")
         for i, block in enumerate(self.controlnet_down_blocks):
             print(f"[{i}] {block}")
@@ -850,7 +849,8 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
                 print(f"    res_samples[{i}] shape: {res.shape}")
                 
             down_block_res_samples += res_samples
-
+            
+        print("")    
         for i, tensor in enumerate(down_block_res_samples):
             print(f"[DEBUG] down_block_res_samples[{i}]: shape = {tensor.shape}")
         

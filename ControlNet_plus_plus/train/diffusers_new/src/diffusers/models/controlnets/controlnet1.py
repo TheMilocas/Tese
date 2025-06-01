@@ -63,6 +63,7 @@ class NoSkipUpBlock2D(nn.Module):
 
         for i in range(num_layers):
             resnet_in_channels = in_channels if i == 0 else out_channels
+            print(f"[INIT] ResNet Layer {i}: in_channels={resnet_in_channels}, out_channels={out_channels}")
             resnets.append(
                 ResnetBlock2D(
                     in_channels=resnet_in_channels,
@@ -144,6 +145,7 @@ class NoSkipCrossAttnUpBlock2D(nn.Module):
         
         for i in range(num_layers):
             resnet_in_channels = in_channels if i == 0 else out_channels
+            print(f"[INIT] ResNet Layer {i}: in_channels={resnet_in_channels}, out_channels={out_channels}")
             resnets.append(
                 ResnetBlock2D(
                     in_channels=resnet_in_channels,
@@ -158,7 +160,7 @@ class NoSkipCrossAttnUpBlock2D(nn.Module):
                     pre_norm=resnet_pre_norm,
                 )
             )
-
+            print(f"[INIT] Attn Layer {i}: in_channels={out_channels}")
             attentions.append(
                 Transformer2DModel(
                     num_attention_heads,
@@ -365,10 +367,10 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
         flip_sin_to_cos: bool = True,
         freq_shift: int = 0,
         up_block_types: Tuple[str, ...] = (
-            "CrossAttnUpBlock2D",
-            "CrossAttnUpBlock2D",
-            "CrossAttnUpBlock2D",
             "UpBlock2D",
+            "CrossAttnUpBlock2D",
+            "CrossAttnUpBlock2D",
+            "CrossAttnUpBlock2D",
         ),
         mid_block_type: Optional[str] = "UNetMidBlock2DCrossAttn",
         only_cross_attention: Union[bool, Tuple[bool]] = False,
@@ -561,6 +563,8 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
         controlnet_block = nn.Conv2d(mid_block_channel, mid_block_channel, kernel_size=1)
         controlnet_block = zero_module(controlnet_block)
         self.controlnet_mid_block = controlnet_block
+
+        # print(f"midblock: {self.controlnet_mid_block}")
         
         if mid_block_type == "UNetMidBlock2DCrossAttn":
             self.mid_block = UNetMidBlock2DCrossAttn(
@@ -591,40 +595,53 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
             )
         else:
             raise ValueError(f"unknown mid_block_type : {mid_block_type}")
-
-        # up
-        reversed_block_out_channels = list(reversed(block_out_channels))
-        reversed_num_attention_heads = list(reversed(num_attention_heads))
         
-        self.up_blocks = nn.ModuleList([])
+        # up                
+        self.up_blocks = nn.ModuleList()
         self.controlnet_up_blocks = nn.ModuleList([])
+        self.num_upsamplers = 0  
         
-        # Initial block (matches down blocks structure)
+        for i in range(len(block_out_channels)):
+            print(f"[DEBUG] block_out_channels[{i}]: {block_out_channels[i]}") 
+
+        for i in range(len(up_block_types)):
+            print(f"[DEBUG] block_out_channels[{i}]: {up_block_types[i]}") 
+        
+        reversed_block_out_channels = list(reversed(block_out_channels))
+
         output_channel = reversed_block_out_channels[0]
-        
+
         for i, up_block_type in enumerate(up_block_types):
-            is_final_block = i == len(up_block_types) - 1
+            is_final_block = i == len(block_out_channels) - 1
+            
             output_channel = reversed_block_out_channels[i]
-            input_channel = reversed_block_out_channels[min(i + 1, len(block_out_channels) - 1)]
+            input_channel = reversed_block_out_channels[min(i + 1, len(block_out_channels) - 1)]  
+            
+            if not is_final_block:
+                add_upsample = True
+                self.num_upsamplers += 1
+            else:
+                add_upsample = False      
+                
+            print(f"input_channel: {input_channel}")
+            print(f"output_channel: {output_channel}")
         
-            # Create the main up block
             if up_block_type == "CrossAttnUpBlock2D":
                 up_block = NoSkipCrossAttnUpBlock2D(
                     in_channels=input_channel,
                     out_channels=output_channel,
                     temb_channels=time_embed_dim,
                     num_layers=layers_per_block + 1,
-                    transformer_layers_per_block=transformer_layers_per_block[i],
                     resnet_eps=norm_eps,
                     resnet_time_scale_shift=resnet_time_scale_shift,
                     dropout=0.0,
                     cross_attention_dim=cross_attention_dim,
-                    num_attention_heads=reversed_num_attention_heads[i],
+                    num_attention_heads=num_attention_heads[i],
                     resnet_act_fn=act_fn,
                     resnet_groups=norm_num_groups,
                     use_linear_projection=use_linear_projection,
                     upcast_attention=upcast_attention,
-                    add_upsample=not is_final_block,
+                    add_upsample=add_upsample,
                 )
             elif up_block_type == "UpBlock2D":
                 up_block = NoSkipUpBlock2D(
@@ -637,30 +654,34 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
                     dropout=0.0,
                     resnet_act_fn=act_fn,
                     resnet_groups=norm_num_groups,
-                    add_upsample=not is_final_block,
+                    add_upsample=add_upsample,
                 )
+            else:
+                raise ValueError(f"Unsupported up block type: {up_block_type}")
+        
             self.up_blocks.append(up_block)
         
-            # Add controlnet blocks following the original pattern
-            # For each level, add layers_per_block + 1 extra if not final
-
-            if i!=0:
-                controlnet_block = nn.Conv2d(output_channel, output_channel, kernel_size=1)
-                controlnet_block = zero_module(controlnet_block)
-                self.controlnet_up_blocks.append(controlnet_block)
-                print(f"Added block (extra): {controlnet_block}")
-                
+            print(f"[INIT] UpBlock {i}: {up_block_type} | in_channels={input_channel}, out_channels={output_channel}")
+        
             for _ in range(layers_per_block):
                 controlnet_block = nn.Conv2d(output_channel, output_channel, kernel_size=1)
                 controlnet_block = zero_module(controlnet_block)
                 self.controlnet_up_blocks.append(controlnet_block)
                 print(f"Added block (from layers_per_block): {controlnet_block}")
+
+            if i != 0:
+                controlnet_block = nn.Conv2d(output_channel, output_channel, kernel_size=1)
+                controlnet_block = zero_module(controlnet_block)
+                self.controlnet_up_blocks.append(controlnet_block)
+                print(f"Added block (extra): {controlnet_block}")
         
-        # Final output block to match down blocks count
+            print("\n")
+        
+        # Final residual block for the last UpBlock
         controlnet_block = nn.Conv2d(output_channel, output_channel, kernel_size=1)
         controlnet_block = zero_module(controlnet_block)
         self.controlnet_up_blocks.append(controlnet_block)
-
+        
         print("\nFinal controlnet_up_blocks:")
         for i, block in enumerate(self.controlnet_up_blocks):
             print(f"[{i}] {block}")
@@ -800,9 +821,9 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
             #controlnet.up_blocks.load_state_dict(unet.up_blocks.state_dict())
             controlnet.mid_block.load_state_dict(unet.mid_block.state_dict())
 
-        # if hasattr(controlnet, "up_blocks") and hasattr(unet, "up_blocks"):
-        #         for i, (c_blk, u_blk) in enumerate(zip(controlnet.up_blocks, unet.up_blocks)):
-        #             compare_modules(c_blk, u_blk, f"up_blocks[{i}]")
+        if hasattr(controlnet, "up_blocks") and hasattr(unet, "up_blocks"):
+                for i, (c_blk, u_blk) in enumerate(zip(controlnet.up_blocks, unet.up_blocks)):
+                    compare_modules(c_blk, u_blk, f"up_blocks[{i}]")
         
         return controlnet
 
@@ -1111,11 +1132,9 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
         # print(f"Mid block output shape: {mid_block_res_sample.shape}")
 
         # 4. up
-
-        up_block_res_samples = (sample,)  # Start with mid block output
+        up_block_res_samples = (sample,)
         
         for upsample_block in self.up_blocks:
-            # Forward through up block
             if hasattr(upsample_block, "has_cross_attention"):
                 sample, res_samples = upsample_block(
                     hidden_states=sample,
@@ -1138,15 +1157,14 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
         for i, tensor in enumerate(up_block_res_samples):
             print(f"[DEBUG] up_block_res_samples[{i}]: shape = {tensor.shape}")
 
-        controlnet_res_samples = []
-    
-        # We should have exactly 12 blocks (11 down + 1 mid)
+        controlnet_up_block_res_samples = ()
+
         for up_block_res_sample, controlnet_block in zip(up_block_res_samples, self.controlnet_up_blocks):
-        up_block_res_sample = controlnet_block(up_block_res_sample)
-        controlnet_up_block_res_samples = controlnet_up_block_res_samples + (up_block_res_sample,)
-    
-        down_block_res_samples = controlnet_up_block_res_samples[1:]  # Skip first sample (from mid block)
-        mid_block_res_sample = controlnet_up_block_res_samples[0]  # First was mid
+            up_block_res_sample = controlnet_block(up_block_res_sample)
+            controlnet_up_block_res_samples = controlnet_up_block_res_samples + (up_block_res_sample,)
+        
+        up_block_res_samples = controlnet_up_block_res_samples 
+
         
         # 5. Scaling
         if guess_mode and not self.config.global_pool_conditions:

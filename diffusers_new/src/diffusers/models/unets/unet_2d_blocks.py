@@ -1180,6 +1180,7 @@ class CrossAttnDownBlock2D(nn.Module):
 
         for i in range(num_layers):
             in_channels = in_channels if i == 0 else out_channels
+            print(f"[INIT] ResNet Layer {i}: in_channels={in_channels}, out_channels={out_channels}")
             resnets.append(
                 ResnetBlock2D(
                     in_channels=in_channels,
@@ -1195,6 +1196,7 @@ class CrossAttnDownBlock2D(nn.Module):
                 )
             )
             if not dual_cross_attention:
+                print(f"[INIT] Attn Layer {i}: in_channels={out_channels}")
                 attentions.append(
                     Transformer2DModel(
                         num_attention_heads,
@@ -1210,6 +1212,7 @@ class CrossAttnDownBlock2D(nn.Module):
                     )
                 )
             else:
+                print(f"[INIT] Attn Layer {i}: in_channels={out_channels}")
                 attentions.append(
                     DualTransformer2DModel(
                         num_attention_heads,
@@ -1313,6 +1316,7 @@ class DownBlock2D(nn.Module):
 
         for i in range(num_layers):
             in_channels = in_channels if i == 0 else out_channels
+            print(f"[INIT] ResNet Layer {i}: in_channels={in_channels}, out_channels={out_channels}")
             resnets.append(
                 ResnetBlock2D(
                     in_channels=in_channels,

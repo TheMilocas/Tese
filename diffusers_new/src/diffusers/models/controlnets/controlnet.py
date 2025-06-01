@@ -370,8 +370,8 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
             input_channel = output_channel
             output_channel = block_out_channels[i]
             is_final_block = i == len(block_out_channels) - 1
-            # print(f"input_channel: {input_channel}")
-            # print(f"output_channel: {output_channel}")
+            print(f"input_channel: {input_channel}")
+            print(f"output_channel: {output_channel}")
             
             down_block = get_down_block(
                 down_block_type,
@@ -394,6 +394,8 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
                 resnet_time_scale_shift=resnet_time_scale_shift,
             )
             self.down_blocks.append(down_block)
+
+            print(f"[INIT] DownBlock {i}: {down_block_type} | in_channels={input_channel}, out_channels={output_channel}")
             
             for _ in range(layers_per_block):
                 controlnet_block = nn.Conv2d(output_channel, output_channel, kernel_size=1)
@@ -406,6 +408,8 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
                 controlnet_block = zero_module(controlnet_block)
                 self.controlnet_down_blocks.append(controlnet_block)
                 print(f"Added block (extra): {controlnet_block}")
+                            
+            print("\n")
                 
         # for i, layer in enumerate(self.controlnet_down_blocks):
         #     print(f"[DEBUG] controlnet_up_blocks[{i}]: {layer.in_channels}")

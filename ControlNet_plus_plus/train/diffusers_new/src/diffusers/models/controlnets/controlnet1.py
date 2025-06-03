@@ -208,12 +208,12 @@ class NoSkipCrossAttnUpBlock2D(nn.Module):
                     return_dict=False,
                 )[0]
             
-            output_states = output_states + (hidden_states,)
+            output_states += (hidden_states,)
             
         if self.upsamplers is not None:
             for upsample in self.upsamplers:
                 hidden_states = upsample(hidden_states, upsample_size)
-                output_states = output_states + (hidden_states,)
+                output_states += (hidden_states,)
             
         return hidden_states, output_states
 
@@ -616,7 +616,6 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
             
             output_channel = reversed_block_out_channels[i]
             input_channel = reversed_block_out_channels[min(i + 1, len(block_out_channels) - 1)]  
-            
             if not is_final_block:
                 add_upsample = True
                 self.num_upsamplers += 1
@@ -663,13 +662,14 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
         
             print(f"[INIT] UpBlock {i}: {up_block_type} | in_channels={input_channel}, out_channels={output_channel}")
         
-            for _ in range(layers_per_block):
+            num_layers = layers_per_block + 1
+            for _ in range(num_layers):
                 controlnet_block = nn.Conv2d(output_channel, output_channel, kernel_size=1)
                 controlnet_block = zero_module(controlnet_block)
                 self.controlnet_up_blocks.append(controlnet_block)
                 print(f"Added block (from layers_per_block): {controlnet_block}")
 
-            if i != 0:
+            if up_block_type == "CrossAttnUpBlock2D" and i != 0:
                 controlnet_block = nn.Conv2d(output_channel, output_channel, kernel_size=1)
                 controlnet_block = zero_module(controlnet_block)
                 self.controlnet_up_blocks.append(controlnet_block)

@@ -66,7 +66,7 @@ from diffusers.utils.import_utils import is_xformers_available
 
 from utils import image_grid, get_reward_model, get_reward_loss, label_transform, group_random_crop
 
-from diffusers_new.src.diffusers.models.controlnets.controlnet1 import ControlNetModel
+from diffusers_new.src.diffusers.models.controlnets.controlnet2 import ControlNetModel
 
 from PIL import PngImagePlugin
 MaximumDecompressedsize = 1024

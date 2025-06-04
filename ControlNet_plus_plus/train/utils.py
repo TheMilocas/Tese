@@ -50,7 +50,7 @@ class ARCFACE(nn.Module):
         Returns:
             torch.Tensor: Embeddings in shape [B, 512]
         """
-        inputs = self.transform(images)
+        inputs = self.transform(images).float()
         
         if 'CUDAExecutionProvider' in self.sess.get_providers():
             io_binding = self.sess.io_binding()

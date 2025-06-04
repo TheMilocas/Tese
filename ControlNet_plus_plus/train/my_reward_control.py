@@ -43,7 +43,7 @@ from packaging import version
 from torchvision import transforms
 from torch.cuda.amp import autocast
 from torchvision.transforms.functional import normalize
-
+from torchvision.utils import save_image
 
 try:
     from torchvision.transforms import InterpolationMode
@@ -55,7 +55,8 @@ import diffusers
 from diffusers import (
     AutoencoderKL,
     DDPMScheduler,
-    StableDiffusionControlNetPipeline,
+    # StableDiffusionControlNetPipeline,
+    StableDiffusionControlNetInpaintPipeline,
     UNet2DConditionModel,
     UniPCMultistepScheduler,
 )
@@ -66,7 +67,7 @@ from diffusers.utils.import_utils import is_xformers_available
 
 from utils import image_grid, get_reward_model, get_reward_loss, label_transform, group_random_crop
 
-from diffusers_new.src.diffusers.models.controlnets.controlnet2 import ControlNetModel
+from diffusers_new.src.diffusers.models.controlnets.controlnet1 import ControlNetModel
 
 from PIL import PngImagePlugin
 MaximumDecompressedsize = 1024
@@ -115,7 +116,7 @@ def log_validation(
 
     controlnet = accelerator.unwrap_model(controlnet)
 
-    pipeline = StableDiffusionControlNetPipeline.from_pretrained(
+    pipeline = StableDiffusionControlNetInpaintPipeline.from_pretrained(
         args.pretrained_model_name_or_path,
         vae=vae,
         text_encoder=text_encoder,
@@ -201,6 +202,7 @@ def log_validation(
             with torch.autocast("cuda"):
                 images = pipeline(
                     [""] * len(validation_embeddings),
+                    mask_image=mask_image,
                     controlnet_cond=validation_embeddings,
                     num_inference_steps=20,
                     generator=generator
@@ -249,7 +251,7 @@ def log_validation(
         # Store the ControlNet parameters temporarily and load the EMA parameters to perform inference.
         ema_controlnet.copy_to(controlnet.parameters())
 
-        pipeline = StableDiffusionControlNetPipeline.from_pretrained(
+        pipeline = StableDiffusionControlNetInpaintPipeline.from_pretrained(
             args.pretrained_model_name_or_path,
             vae=vae,
             text_encoder=text_encoder,
@@ -274,6 +276,7 @@ def log_validation(
                 with torch.autocast("cuda"):
                     images = pipeline(
                         [""] * len(validation_embeddings),
+                        mask_image=mask_image,
                         controlnet_cond=validation_embeddings,
                         num_inference_steps=20,
                         generator=generator
@@ -993,6 +996,7 @@ def make_train_dataset(args, tokenizer, accelerator, split='train'):
         # Process images
         pil_images = [image.convert("RGB") for image in examples[image_column]]
         images = [image_transforms(image) for image in pil_images]
+        masks = [mask.convert("L") for mask in examples["mask"]]
 
         # Process embeddings
         conditioning_values = []  
@@ -1009,6 +1013,7 @@ def make_train_dataset(args, tokenizer, accelerator, split='train'):
 
         return {
             "pixel_values": images,
+            "mask": masks,
             "conditioning_values": conditioning_values,  
             "input_ids": tokenize_captions(examples),
         }
@@ -1029,6 +1034,7 @@ def collate_fn(examples):
         "pixel_values": torch.stack([x["pixel_values"] for x in examples]),
         "conditioning_values": torch.stack([x["conditioning_values"] for x in examples]), 
         "input_ids": torch.stack([x["input_ids"] for x in examples]),
+        "mask": [x["mask"] for x in examples],
     }
     
 # def make_train_dataset(args, tokenizer, accelerator, split='train'):
@@ -1645,8 +1651,8 @@ def main(args):
                     else: 
                         conditioning_values = batch["conditioning_values"].to(dtype=weight_dtype)
 
-                    #print("encoder_hidden_states shape:", encoder_hidden_states.shape)  # should be [B, 77, 768]
-                    #print("conditioning_values shape:", conditioning_values.shape)      # should be [B, 512]
+                    # print("encoder_hidden_states shape:", encoder_hidden_states.shape)  # should be [B, 77, 768]
+                    print("conditioning_values shape:", conditioning_values.shape)      # should be [B, 512]
 
                     mid_block_res_sample, up_block_res_samples = controlnet(
                         noisy_latents,

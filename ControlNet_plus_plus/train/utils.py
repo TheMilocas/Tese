@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 import numpy as np
 import torchvision.transforms.functional as F
-import onnxruntime as ort
 
 import sys
 import os
@@ -22,60 +21,32 @@ from mmseg.models.losses.silog_loss import silog_loss
 from torchvision.transforms import RandomCrop
 from torchvision import transforms
 
+from torch.nn import functional as F
+from backbones.iresnet import iresnet100 
+
 class ARCFACE(nn.Module):
-    def __init__(self, model_path):
-        super().__init__()
-        self.sess = ort.InferenceSession(model_path)
-        
-        self.providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
-        self.sess.set_providers([p for p in self.providers if p in ort.get_available_providers()])
-        
-        self.transform = transforms.Compose([
-            transforms.Resize((112, 112)),
-            transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
-        ])
-        
-        self.register_buffer('dummy', torch.empty(0))
-        
-    @property
-    def device(self):
-        return self.dummy.device
-        
-    def forward(self, images):
-        """Process batch of images and return embeddings.
-        
-        Args:
-            images: torch.Tensor in shape [B, 3, H, W] in range [0, 1]
-            
-        Returns:
-            torch.Tensor: Embeddings in shape [B, 512]
+    def __init__(self, model_path: str, device: str = 'cuda'):
+        super(ARCFACE, self).__init__()
+        self.device = torch.device(device if torch.cuda.is_available() else 'cpu')
+
+        self.model = iresnet100(pretrained=False)  
+        self.model.load_state_dict(torch.load(model_path, map_location=self.device))
+        self.model.to(self.device)
+        self.model.eval()
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
-        inputs = self.transform(images).float()
-        
-        if 'CUDAExecutionProvider' in self.sess.get_providers():
-            io_binding = self.sess.io_binding()
-            inputs_gpu = inputs.contiguous().to(self.device)
-            
-            io_binding.bind_input(
-                name='input.1',
-                device_type='cuda',
-                device_id=0,
-                element_type=np.float32,
-                shape=inputs_gpu.shape,
-                buffer_ptr=inputs_gpu.data_ptr()
-            )
-            
-            output_shape = (inputs.size(0), 512)
-            outputs = torch.empty(output_shape, dtype=torch.float32, device=self.device)
-            io_binding.bind_output('output', device_type='cuda', device_id=0)
-            
-            self.sess.run_with_iobinding(io_binding)
-            
-            return outputs
-        else:
-            inputs_np = inputs.cpu().numpy()
-            outputs = self.sess.run(None, {'input.1': inputs_np})[0]
-            return torch.from_numpy(outputs).to(self.device)
+        Args:
+            x: (B, 3, 112, 112) - preprocessed RGB images
+
+        Returns:
+            L2-normalized face embeddings: (B, 512)
+        """
+        with torch.no_grad():
+            x = self.model(x.to(self.device))
+            x = F.normalize(x, p=2, dim=1)
+        return x
+
 
 def get_reward_model(task='identity', model_path=None):
     """Return reward model for different tasks.

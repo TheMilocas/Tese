@@ -1519,7 +1519,7 @@ def main(args):
                 reward_loss = reward_loss.reshape_as(timestep_mask)
                 reward_loss = (timestep_mask * reward_loss).sum() / (timestep_mask.sum() + 1e-10)
                 loss = pretrain_loss + reward_loss * args.grad_scale
-
+                
                 """
                 Losses
                 """
@@ -1531,7 +1531,7 @@ def main(args):
                 train_loss += avg_loss.item() / args.gradient_accumulation_steps
                 train_pretrain_loss += avg_pretrain_loss.item() / args.gradient_accumulation_steps
                 train_reward_loss += avg_reward_loss.item() / args.gradient_accumulation_steps
-
+                
                 # Back propagate
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:

@@ -3,6 +3,10 @@ import torch.nn as nn
 import numpy as np
 import torchvision.transforms.functional as F
 
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
 from PIL import Image
 from typing import Optional
 from functools import partial
@@ -15,15 +19,44 @@ from transformers import DPTForDepthEstimation  # depth estimation
 
 from mmseg.models.losses.silog_loss import silog_loss
 from torchvision.transforms import RandomCrop
+from torchvision import transforms
+
+from torch.nn import functional as F
+from backbones.iresnet import iresnet100 
+
+class ARCFACE(nn.Module):
+    def __init__(self, model_path: str, device: str = 'cuda'):
+        super(ARCFACE, self).__init__()
+        self.device = torch.device(device if torch.cuda.is_available() else 'cpu')
+
+        self.model = iresnet100(pretrained=False)  
+        self.model.load_state_dict(torch.load(model_path, map_location=self.device))
+        self.model.to(self.device)
+        self.model.eval()
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: (B, 3, 112, 112) - preprocessed RGB images
+
+        Returns:
+            L2-normalized face embeddings: (B, 512)
+        """
+        with torch.no_grad():
+            x = self.model(x.to(self.device))
+            x = F.normalize(x, p=2, dim=1)
+        return x
 
 
-def get_reward_model(task='segmentation', model_path='mmseg::upernet/upernet_r50_4xb4-160k_ade20k-512x512.py'):
+def get_reward_model(task='identity', model_path=None):
     """Return reward model for different tasks.
-
+    
     Args:
-        task (str, optional): Task name. Defaults to 'segmentation'.
-        model_path (str, optional): Model name or pre-trained path.
-
+        task (str): Task name ('segmentation', 'canny', 'depth', 'lineart', 'hed', 'identity')
+        model_path (str): Path to model weights or config
+        
+    Returns:
+        nn.Module: Reward model for specified task
     """
     if task == 'segmentation':
         return get_model(model_path, pretrained=True)
@@ -33,13 +66,16 @@ def get_reward_model(task='segmentation', model_path='mmseg::upernet/upernet_r50
         return DPTForDepthEstimation.from_pretrained(model_path)
     elif task == 'lineart':
         model = LineDrawingModel()
-        model.load_state_dict(torch.hub.load_state_dict_from_url(model_path, map_location=torch.device('cpu')))
+        model.load_state_dict(torch.hub.load_state_dict_from_url(model_path, map_location='cpu'))
         return model
     elif task == 'hed':
         return HEDdetector(model_path)
+    elif task == 'identity':
+        if model_path is None:
+            raise ValueError("Model path must be specified for identity task")
+        return ARCFACE(model_path)
     else:
-        raise not NotImplementedError("Only support segmentation, canny and depth for now.")
-
+        raise NotImplementedError(f"Task {task} not supported")
 
 def get_reward_loss(predictions, labels, task='segmentation', **args):
     """Return reward loss for different tasks.

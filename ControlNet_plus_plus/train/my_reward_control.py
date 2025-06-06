@@ -65,7 +65,7 @@ from diffusers.optimization import get_scheduler
 from diffusers.utils import check_min_version, deprecate, is_wandb_available
 from diffusers.utils.import_utils import is_xformers_available
 
-from utils import image_grid, get_reward_model, get_reward_loss, label_transform, group_random_crop
+from utils1 import image_grid, get_reward_model, get_reward_loss, label_transform, group_random_crop
 
 from diffusers_new.src.diffusers.models.controlnets.controlnet1 import ControlNetModel
 
@@ -1663,9 +1663,9 @@ def main(args):
                     )
                     
                     up_block_res_samples = tuple(reversed(up_block_res_samples))  # reverse the order because the unet expectes to receive the deconding part
-                    print(f"mid_block shape: {mid_block_res_sample.shape}")
-                    for i, t in enumerate(up_block_res_samples):
-                        print(f"Residual {i} shape: {t.shape}")
+                    # print(f"mid_block shape: {mid_block_res_sample.shape}")
+                    # for i, t in enumerate(up_block_res_samples):
+                    #     print(f"Residual {i} shape: {t.shape}")
                     # Predict the noise residual
                     model_pred = unet(
                         noisy_latents,
@@ -1804,8 +1804,8 @@ def main(args):
                 
                 # calculate the reward loss
                 if args.task_name == 'identity':
-                    # For identity, we already computed the loss directly
-                    pass
+                    reward_loss = reward_loss.mean()
+                    loss = pretrain_loss + reward_loss * args.grad_scale
                 else:
                     reward_loss = get_reward_loss(outputs, labels, args.task_name, reduction='none')
                 
@@ -1835,7 +1835,7 @@ def main(args):
                 train_loss += avg_loss.item() / args.gradient_accumulation_steps
                 train_pretrain_loss += avg_pretrain_loss.item() / args.gradient_accumulation_steps
                 train_reward_loss += avg_reward_loss.item() / args.gradient_accumulation_steps
-
+                print(loss.size)
                 # Back propagate
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:

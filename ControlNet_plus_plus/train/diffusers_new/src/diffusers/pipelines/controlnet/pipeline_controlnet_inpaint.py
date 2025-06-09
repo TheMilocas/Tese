@@ -26,7 +26,7 @@ from transformers import CLIPImageProcessor, CLIPTextModel, CLIPTokenizer, CLIPV
 from ...callbacks import MultiPipelineCallbacks, PipelineCallback
 from ...image_processor import PipelineImageInput, VaeImageProcessor
 from ...loaders import FromSingleFileMixin, IPAdapterMixin, StableDiffusionLoraLoaderMixin, TextualInversionLoaderMixin
-from ...models import AutoencoderKL, ControlNetModel, ImageProjection, MultiControlNetModel, UNet2DConditionModel
+from ...models import AutoencoderKL, ImageProjection, MultiControlNetModel, UNet2DConditionModel
 from ...models.lora import adjust_lora_scale_text_encoder
 from ...schedulers import KarrasDiffusionSchedulers
 from ...utils import (
@@ -43,6 +43,7 @@ from ..pipeline_utils import DiffusionPipeline, StableDiffusionMixin
 from ..stable_diffusion import StableDiffusionPipelineOutput
 from ..stable_diffusion.safety_checker import StableDiffusionSafetyChecker
 
+from diffusers_new.src.diffusers.models.controlnets.controlnet1 import ControlNetModel
 
 if is_torch_xla_available():
     import torch_xla.core.xla_model as xm
@@ -1263,7 +1264,7 @@ class StableDiffusionControlNetInpaintPipeline(
             )
 
         # 4. Prepare image
-        if isinstance(controlnet, ControlNetModel):
+        if isinstance(controlnet, ControlNetModel) and control_image[0].ndim != 2:
             control_image = self.prepare_control_image(
                 image=control_image,
                 width=width,
@@ -1277,7 +1278,7 @@ class StableDiffusionControlNetInpaintPipeline(
                 do_classifier_free_guidance=self.do_classifier_free_guidance,
                 guess_mode=guess_mode,
             )
-        elif isinstance(controlnet, MultiControlNetModel):
+        elif isinstance(controlnet, MultiControlNetModel) and control_image[0].ndim != 2:
             control_images = []
 
             for control_image_ in control_image:
@@ -1299,7 +1300,7 @@ class StableDiffusionControlNetInpaintPipeline(
 
             control_image = control_images
         else:
-            assert False
+            pass #assert False
 
         # 4.1 Preprocess mask and image - resizes image and mask w.r.t height and width
         original_image = image

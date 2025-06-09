@@ -151,98 +151,101 @@ def log_validation(
     try:
         validation_images = val_dataset[image_column]
         validation_prompts = [""] * len(validation_images)
-        if args.task_name != 'identity':
+        if args.task_name == 'identity':
+            validation_conditions = [
+            torch.from_numpy(np.load(path)).unsqueeze(0)
+                if isinstance(path, str) else path
+                for path in val_dataset[conditioning_image_column]
+            ]
+        else:
             validation_conditions = val_dataset[conditioning_image_column]
+        validation_masks = val_dataset["mask"]
     except:
         validation_images = [item[image_column] for item in val_dataset]
         validation_prompts = [""] * len(validation_images)
-        if args.task_name != 'identity':
+        validation_masks = [item["mask"] for item in val_dataset]
+        if args.task_name == 'identity':
+            validation_conditions = [
+                torch.from_numpy(np.load(item[conditioning_image_column])).unsqueeze(0)
+                if isinstance(item[conditioning_image_column], str) else item[conditioning_image_column]
+                for item in val_dataset
+            ]
+        else:
             validation_conditions = [item[conditioning_image_column] for item in val_dataset]
-
-    if args.task_name == 'identity':
-        validation_embeddings = []
-        for rel_path in val_dataset[args.conditioning_image_column]:
-            abs_path = os.path.join(args.local_embedding_dir, rel_path)
-            validation_embeddings.append(torch.from_numpy(np.load(abs_path)))
-        validation_embeddings = torch.stack(validation_embeddings).to(accelerator.device)
-    else:
-        # Avoid some problems caused by grayscale images
-        validation_conditions = [x.convert('RGB') for x in validation_conditions]
-        
-        if args.conditioning_image_column == "canny":
-            low_threshold = 0.1 # low_threshold = random.uniform(0, 1)
-            high_threshold = 0.2 # high_threshold = random.uniform(low_threshold, 1)
-            with autocast():
-                validation_conditions = [torchvision.transforms.functional.pil_to_tensor(x) for x in validation_conditions]
-                validation_conditions = [x / 255. for x in validation_conditions]
-                validation_conditions = kornia.filters.canny(torch.stack(validation_conditions), low_threshold, high_threshold)[1]
-                validation_conditions = torch.chunk(validation_conditions, len(validation_conditions), dim=0)
-                validation_conditions = [torchvision.transforms.functional.to_pil_image(x.squeeze(0), 'L') for x in validation_conditions]
-        elif args.conditioning_image_column in ['lineart', 'hed']:
-            with autocast():
-                validation_conditions = [torchvision.transforms.functional.pil_to_tensor(x) for x in validation_conditions]
-                validation_conditions = [x / 255. for x in validation_conditions]
-                validation_conditions = [torchvision.transforms.functional.resize(x, (512, 512), interpolation=Image.BICUBIC) for x in validation_conditions]
-                with torch.no_grad():
-                    validation_conditions = reward_model(torch.stack(validation_conditions).to(accelerator.device))
-                validation_conditions = 1 - validation_conditions if args.task_name == 'lineart' else validation_conditions
-                validation_conditions = torch.chunk(validation_conditions, len(validation_conditions), dim=0)
-                validation_conditions = [torchvision.transforms.functional.to_pil_image(x.squeeze(0), 'L') for x in validation_conditions]
+            
+    if args.task_name != 'identity':
+        validation_conditions = [x.convert('RGB') for x in validation_conditions]  
+            
+    if args.conditioning_image_column == "canny":
+        low_threshold = 0.1 # low_threshold = random.uniform(0, 1)
+        high_threshold = 0.2 # high_threshold = random.uniform(low_threshold, 1)
+        with autocast():
+            validation_conditions = [torchvision.transforms.functional.pil_to_tensor(x) for x in validation_conditions]
+            validation_conditions = [x / 255. for x in validation_conditions]
+            validation_conditions = kornia.filters.canny(torch.stack(validation_conditions), low_threshold, high_threshold)[1]
+            validation_conditions = torch.chunk(validation_conditions, len(validation_conditions), dim=0)
+            validation_conditions = [torchvision.transforms.functional.to_pil_image(x.squeeze(0), 'L') for x in validation_conditions]
+    elif args.conditioning_image_column in ['lineart', 'hed']:
+        with autocast():
+            validation_conditions = [torchvision.transforms.functional.pil_to_tensor(x) for x in validation_conditions]
+            validation_conditions = [x / 255. for x in validation_conditions]
+            validation_conditions = [torchvision.transforms.functional.resize(x, (512, 512), interpolation=Image.BICUBIC) for x in validation_conditions]
+            with torch.no_grad():
+                validation_conditions = reward_model(torch.stack(validation_conditions).to(accelerator.device))
+            validation_conditions = 1 - validation_conditions if args.task_name == 'lineart' else validation_conditions
+            validation_conditions = torch.chunk(validation_conditions, len(validation_conditions), dim=0)
+            validation_conditions = [torchvision.transforms.functional.to_pil_image(x.squeeze(0), 'L') for x in validation_conditions]
 
     image_logs = []
     identity_similarities = []
     
     logger.info(f"Running validation with {len(validation_prompts)} prompts... ")
-    for i, (validation_prompt, validation_image) in enumerate(zip(validation_prompts, validation_images)):
+    for validation_prompt, validation_condition, validation_image, validation_mask in zip(validation_prompts, validation_conditions, validation_images, validation_masks):
         if val_dataset is not None:
             validation_image = validation_image.convert('RGB').resize((512, 512), Image.Resampling.BICUBIC)
-        
-        if args.task_name == 'identity':
-            validation_embedding = validation_embeddings[i].unsqueeze(0)
-            with torch.autocast("cuda"):
-                images = pipeline(
-                    [""] * len(validation_embeddings),
-                    mask_image=mask_image,
-                    controlnet_cond=validation_embeddings,
-                    num_inference_steps=20,
-                    generator=generator
-                ).images
-            
-            with torch.no_grad():
-                processed_images = torch.stack([
-                    transforms.Compose([
-                        transforms.ToTensor(),
-                        transforms.Resize((112, 112)),
-                        transforms.Normalize([0.5], [0.5])
-                    ])(img.convert("RGB")) for img in images
-                ]).to(accelerator.device)
-                
-                output_embeddings = reward_model(processed_images)
-                similarities = F.cosine_similarity(output_embeddings, validation_embedding)
-                identity_similarities.extend(similarities.cpu().tolist())
-            
-            # Create dummy condition image for logging
-            validation_condition = Image.new('RGB', (512, 512), (0, 0, 0))
-        else:
-            # Original image-based conditioning
-            validation_condition = validation_conditions[i]
-            if val_dataset is not None:
+            if args.task_name != 'identity':
                 validation_condition = validation_condition.convert('RGB').resize((512, 512), Image.Resampling.BICUBIC)
-            else:
-                validation_condition = Image.open(validation_condition).convert("RGB").resize((512, 512), Image.Resampling.BICUBIC)
+            validation_mask = validation_mask.convert("L").resize((512, 512), Image.Resampling.BICUBIC)
+        else:
+            validation_condition = Image.open(validation_condition).convert("RGB").resize((512, 512), Image.Resampling.BICUBIC)
 
-            with torch.autocast("cuda"):
-                images = pipeline(
-                    [validation_prompt] * args.num_validation_images,
-                    [validation_condition] * args.num_validation_images,
-                    num_inference_steps=20,
-                    generator=generator
-                ).images
+        # # === DEBUG LOGGING START ===
+        # # 1) Prompt
+        # print(f"[DEBUG] prompt: {validation_prompt!r}")
+    
+        # # 2) Condition — if it’s a tensor, print its dtype & shape; else its type
+        # if isinstance(validation_condition, torch.Tensor):
+        #     print(f"[DEBUG] validation_condition is tensor, shape={validation_condition.shape}, dtype={validation_condition.dtype}")
+        # else:
+        #     print(f"[DEBUG] validation_condition is {type(validation_condition)}")
+    
+        # # 3) Base image
+        # print(f"[DEBUG] validation_image is {type(validation_image)}")
+        # # you can also convert to tensor to check
+        # img_t = torchvision.transforms.functional.pil_to_tensor(validation_image)
+        # print(f"[DEBUG] validation_image tensor shape: {img_t.shape}, dtype={img_t.dtype}")
+    
+        # # 4) Mask
+        # print(f"[DEBUG] validation_mask is {type(validation_mask)}")
+        # mask_t = torchvision.transforms.functional.pil_to_tensor(validation_mask)
+        # print(f"[DEBUG] validation_mask tensor shape: {mask_t.shape}, dtype={mask_t.dtype}")
+        # # === DEBUG LOGGING END ===
+            
+        with torch.autocast("cuda"):
+            images = pipeline(
+                prompt=[validation_prompt] * args.num_validation_images,
+                control_image=[validation_condition] * args.num_validation_images,
+                image=[validation_image] * args.num_validation_images,
+                mask_image=[validation_mask] * args.num_validation_images,
+                num_inference_steps=20,
+                generator=generator
+            ).images
 
         image_logs.append({
             "validation_image": validation_image,
             "validation_condition": validation_condition,
             "validation_prompt": validation_prompt,
+            "validation_mask": validation_mask,
             "images": images,
             'ema_images': []
         })
@@ -270,47 +273,27 @@ def log_validation(
             pipeline.enable_xformers_memory_efficient_attention()
 
         logger.info(f"Running validation with {len(validation_prompts)} prompts... ")
-        for idx, (validation_prompt, validation_image) in enumerate(zip(validation_prompts, validation_images)):
-            if args.task_name == 'identity':
-                validation_embedding = validation_embeddings[idx].unsqueeze(0)
-                with torch.autocast("cuda"):
-                    images = pipeline(
-                        [""] * len(validation_embeddings),
-                        mask_image=mask_image,
-                        controlnet_cond=validation_embeddings,
-                        num_inference_steps=20,
-                        generator=generator
-                    ).images
 
-                with torch.no_grad():
-                    processed_images = torch.stack([
-                        transforms.Compose([
-                            transforms.ToTensor(),
-                            transforms.Resize((112, 112)),
-                            transforms.Normalize([0.5], [0.5])
-                        ])(img.convert("RGB")) for img in images
-                    ]).to(accelerator.device)
-                    
-                    output_embeddings = reward_model(processed_images)
-                    similarities = F.cosine_similarity(output_embeddings, validation_embedding)
-                    identity_similarities.extend(similarities.cpu().tolist())
-            else:
-                validation_condition = validation_conditions[idx]
-                if val_dataset is not None:
+        for idx, (validation_prompt, validation_condition, validation_image, validation_mask) in enumerate(zip(validation_prompts, validation_conditions, validation_images, validation_masks)):
+            if val_dataset is not None:
+                validation_image = validation_image.convert("RGB").resize((512, 512), Image.Resampling.BICUBIC)
+                if args.task_name != 'identity':    
                     validation_condition = validation_condition.convert('RGB').resize((512, 512), Image.Resampling.BICUBIC)
-                else:
-                    validation_condition = Image.open(validation_condition).convert("RGB").resize((512, 512), Image.Resampling.BICUBIC)
-
-                with torch.autocast("cuda"):
-                    images = pipeline(
-                        [validation_prompt] * args.num_validation_images,
-                        [validation_condition] * args.num_validation_images,
-                        num_inference_steps=20,
-                        generator=generator
-                    ).images
+                validation_mask = validation_mask.convert("L").resize((512, 512), Image.Resampling.BICUBIC)
+            else:
+                validation_condition = Image.open(validation_condition).convert("RGB").resize((512, 512), Image.Resampling.BICUBIC)
+                         
+            with torch.autocast("cuda"):
+                images = pipeline(
+                    prompt=[validation_prompt] * args.num_validation_images,
+                    control_image=[validation_condition] * args.num_validation_images,
+                    image=[validation_image] * args.num_validation_images,
+                    mask_image=[validation_mask] * args.num_validation_images,
+                    num_inference_steps=20,
+                    generator=generator
+                ).images
 
             image_logs[idx]['ema_images'] = images
-
 
     for tracker in accelerator.trackers:
         if tracker.name == "tensorboard":
@@ -321,7 +304,8 @@ def log_validation(
                 validation_image = log["validation_image"]
                 validation_condition = log["validation_condition"]
 
-                validation_prompt = validation_prompt + ['EMA'] * len(validation_prompt) #
+                ema_labels = ["EMA"] * len(ema_images)
+                prompt_labels = [validation_prompt] * len(images)
 
                 formatted_images = []
 
@@ -335,7 +319,7 @@ def log_validation(
 
                 formatted_images = np.stack(formatted_images)
 
-                tracker.writer.add_images(validation_prompt, formatted_images, step, dataformats="NHWC")
+                tracker.writer.add_images("validation/" + str(i), formatted_images, step, dataformats="NHWC")
                 
             if args.task_name == 'identity' and len(identity_similarities) > 0:
                 avg_similarity = sum(identity_similarities) / len(identity_similarities)
@@ -1645,14 +1629,14 @@ def main(args):
                     if isinstance(batch["conditioning_values"][0], str):  
                         embedding_paths = batch["conditioning_values"]
                         conditioning_values = torch.stack([
-                            torch.from_numpy(np.load(os.path.join(args.local_embedding_dir, path)))
+                            torch.from_numpy(np.load(path))
                             for path in embedding_paths
                         ]).to(accelerator.device, dtype=weight_dtype)
                     else: 
                         conditioning_values = batch["conditioning_values"].to(dtype=weight_dtype)
 
                     # print("encoder_hidden_states shape:", encoder_hidden_states.shape)  # should be [B, 77, 768]
-                    print("conditioning_values shape:", conditioning_values.shape)      # should be [B, 512]
+                    # print("conditioning_values shape:", conditioning_values.shape)      # should be [B, 512]
 
                     mid_block_res_sample, up_block_res_samples = controlnet(
                         noisy_latents,
@@ -1835,7 +1819,7 @@ def main(args):
                 train_loss += avg_loss.item() / args.gradient_accumulation_steps
                 train_pretrain_loss += avg_pretrain_loss.item() / args.gradient_accumulation_steps
                 train_reward_loss += avg_reward_loss.item() / args.gradient_accumulation_steps
-                print(loss.size)
+                
                 # Back propagate
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:

@@ -230,11 +230,13 @@ def log_validation(
         # mask_t = torchvision.transforms.functional.pil_to_tensor(validation_mask)
         # print(f"[DEBUG] validation_mask tensor shape: {mask_t.shape}, dtype={mask_t.dtype}")
         # # === DEBUG LOGGING END ===
-            
+          
+        control_image = torch.stack([validation_condition] * args.num_validation_images).to(device=accelerator.device, dtype=torch.float32)
+        
         with torch.autocast("cuda"):
             images = pipeline(
                 prompt=[validation_prompt] * args.num_validation_images,
-                control_image=[validation_condition] * args.num_validation_images,
+                control_image=control_image,
                 image=[validation_image] * args.num_validation_images,
                 mask_image=[validation_mask] * args.num_validation_images,
                 num_inference_steps=20,
@@ -282,11 +284,12 @@ def log_validation(
                 validation_mask = validation_mask.convert("L").resize((512, 512), Image.Resampling.BICUBIC)
             else:
                 validation_condition = Image.open(validation_condition).convert("RGB").resize((512, 512), Image.Resampling.BICUBIC)
-                         
+                
+            control_image = torch.stack([validation_condition] * args.num_validation_images).to(device=accelerator.device, dtype=torch.float32)
             with torch.autocast("cuda"):
                 images = pipeline(
                     prompt=[validation_prompt] * args.num_validation_images,
-                    control_image=[validation_condition] * args.num_validation_images,
+                    control_image=control_image,
                     image=[validation_image] * args.num_validation_images,
                     mask_image=[validation_mask] * args.num_validation_images,
                     num_inference_steps=20,

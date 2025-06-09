@@ -40,4 +40,6 @@ ControlNetFolder/controlnetinpaint/zero_controlnet
 celebahq-idi
 datasets
 wandb
-.config/wandb
+wandb/debug.log
+wandb/debug-internal.log
+wandb/latest-run

@@ -1,0 +1,163 @@
+git commit -m "Re-add glintr100.onnx using Git LFS"
+git push --force origin master
+nano .gitignore
+git status
+git add .
+git commit -a
+git commit
+git push --force origin master
+git lfs install
+git lfs track "*.onnx"
+git add .gitattributes
+git commit -m "Enable Git LFS for ONNX files"
+git prune
+git filter-repo --path ARCFACE/models/glintr100.onnx --invert-paths
+git push --force origin master
+git rm --cached ARCFACE/models/glintr100.onnx
+git reset HEAD~1
+git reset ARCFACE/models
+git add .gitignore
+git commit -m "Update .gitignore to exclude large file"
+git status
+git log --oneline
+git push origin
+git push --force origin master
+git clone --mirror https://github.com/TheMilocas/Tese.git
+bfg --delete-files glintr100.onnx Tese.git
+sudo apt-get install git-lfs
+git lfs track "ARCFACE/models/glintr100.onnx"
+git add .gitattributes
+git add ARCFACE/models/glintr100.onnx
+git commit -m "Add large file with Git LFS"
+
+nano .gitignore
+sudo apt-get install git-lfs
+git lfs track "*.onnx"
+git add .gitattributes
+git commit -m "Track .onnx files with Git LFS"
+git push --force origin master
+bfg --delete-files glintr100.onnx Tese.git
+sudo apt-get install bfg
+git init
+rm -rf .git
+ls
+git status
+git init
+git remote add origin https://github.com/TheMilocas/Tese.git
+touch .gitignore
+nano .gitignore .gitignore
+nano .gitignore 
+ls -a
+nano .gitignore  .gitattributes
+rm .gitattributes
+ls -a
+nano .gitconfig
+git status
+git add .
+rm -rf ControlNetInpaint/.git
+git status
+git commit -m "Added custom changes to ControlNetInpaint"
+git push -u origin master
+git submodule deinit -f ControlNetInpaint
+git rm -f ControlNetInpaint
+rm .gitmodules
+ls -la
+git restore --staged ControlNetInpaint
+git restore ControlNetInpaint
+git checkout HEAD^ -- ControlNetInpaint
+ls
+ls -a
+cd  .local
+ls -a
+cd
+ls -a
+cd .cache
+ls -a
+cd
+cd  .local
+ls -a
+cd share
+ls -a
+cd Trash
+ls -a
+cd files
+ls -a
+cp -r ControlNet_Plus_Plus ARCFACE
+ls -a
+cp arcface.py /home/csantiago/
+cp -r ControlNetInpaint /home/csantiago/
+cp -r Inference_controlnet_inpaint /home/csantiago/
+ls ~/.local/share/Trash/files | grep ControlNetInpaint
+cd ControlNetInpaint
+ls
+mv -r ControlNetInpaint /home/csantiago/
+mv ControlNetInpaint /home/csantiago/
+cd
+
+mv ControlNetInpaint /home/csantiago/
+ls -a
+cd ControlNet
+ls
+cd ..
+ls
+cd Inference_controlnet_inpaint
+cd
+cd ~/.local/share/Trash/files/Inference_controlnet_inpaint
+ls
+cd ..
+mv inference_results /home/csantiago/
+mv inference_results2 /home/csantiago/
+cd ..
+ls
+cd info
+ls -a
+ControlNetInpaint.trashinfo
+cd ControlNetInpaint.trashinfo
+nano ControlNetInpaint.trashinfo
+nano ControlNet.trashinfo
+nano ControlNet_Plus_Plus.trashinfo
+cd
+git add diffusers/examples/controlnet/check_controlnet_sizes.py
+nano .gitignore
+git add diffusers/examples/controlnet/check_controlnet_sizes.py
+git adddiffusers/examples/controlnet/conditioning_image_1.png 
+git add diffusers/examples/controlnet/conditioning_image_1.png 
+git add diffusers/examples/controlnet/conditioning_image_2.png 
+git add diffusers/examples/controlnet/conditioning_image_1.png
+git add diffusers/examples/controlnet/controlnetconditioningembed.py
+git add diffusers/examples/controlnet/controlnetconditioningembed.py
+git add diffusers/examples/controlnet/default_config.yaml
+git add diffusers/examples/controlnet/inference_all_checkpoints.py
+git add diffusers/examples/controlnet/inference_controlnet.py
+git add diffusers/examples/controlnet/output.png
+git add diffusers/examples/controlnet/train_controlnet_edited.py
+git add diffusers/examples/controlnet/this.txt
+git commit -m "added diffusers"
+add .gitignore
+git add .gitignore
+git push --force origin master
+git commit -m "added diffusers"
+git push --force origin master
+git status
+git add diffusers
+cd diffusers 
+ls -a
+rm -rf .git
+cd 
+git add diffusers
+git status
+git status
+git restore ControlNetInpaint
+git status
+git push --force origin master
+nano .gitignore
+git add diffusers/examples/controlnet
+rm -rf diffusers/.git
+cd diffusers
+ls -a
+rm -rf diffusers/.gitignore
+rm -rf diffusers/.github
+git add diffusers/examples/controlnet
+cd
+git add ControlNetFolder
+git commit -m "added ControlNetFolder(copy of 

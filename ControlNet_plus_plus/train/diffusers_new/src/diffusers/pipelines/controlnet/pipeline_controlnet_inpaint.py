@@ -1300,7 +1300,19 @@ class StableDiffusionControlNetInpaintPipeline(
 
             control_image = control_images
         else:
-            pass #assert False
+            control_image = torch.stack(control_image, dim=0)
+        
+            if control_image.shape[0] == 1:
+                repeat_by = batch_size * num_images_per_prompt
+            else:
+                repeat_by = num_images_per_prompt
+        
+            control_image = control_image.repeat_interleave(repeat_by, dim=0)
+        
+            control_image = control_image.to(device=device, dtype=controlnet.dtype)
+        
+            if self.do_classifier_free_guidance and not guess_mode:
+                control_image = torch.cat([control_image] * 2, dim=0)
 
         # 4.1 Preprocess mask and image - resizes image and mask w.r.t height and width
         original_image = image
@@ -1413,7 +1425,7 @@ class StableDiffusionControlNetInpaintPipeline(
                         controlnet_cond_scale = controlnet_cond_scale[0]
                     cond_scale = controlnet_cond_scale * controlnet_keep[i]
 
-                down_block_res_samples, mid_block_res_sample = self.controlnet(
+                mid_block_res_sample, up_block_res_samples = self.controlnet(
                     control_model_input,
                     t,
                     encoder_hidden_states=controlnet_prompt_embeds,
@@ -1422,24 +1434,26 @@ class StableDiffusionControlNetInpaintPipeline(
                     guess_mode=guess_mode,
                     return_dict=False,
                 )
-
+                
+                up_block_res_samples = tuple(reversed(up_block_res_samples))
+                
                 if guess_mode and self.do_classifier_free_guidance:
                     # Inferred ControlNet only for the conditional batch.
                     # To apply the output of ControlNet to both the unconditional and conditional batches,
                     # add 0 to the unconditional batch to keep it unchanged.
-                    down_block_res_samples = [torch.cat([torch.zeros_like(d), d]) for d in down_block_res_samples]
+                    up_block_res_samples = [torch.cat([torch.zeros_like(d), d]) for d in up_block_res_samples]
                     mid_block_res_sample = torch.cat([torch.zeros_like(mid_block_res_sample), mid_block_res_sample])
 
                 # predict the noise residual
                 if num_channels_unet == 9:
                     latent_model_input = torch.cat([latent_model_input, mask, masked_image_latents], dim=1)
-
+                    
                 noise_pred = self.unet(
                     latent_model_input,
                     t,
                     encoder_hidden_states=prompt_embeds,
                     cross_attention_kwargs=self.cross_attention_kwargs,
-                    down_block_additional_residuals=down_block_res_samples,
+                    down_block_additional_residuals=up_block_res_samples,
                     mid_block_additional_residual=mid_block_res_sample,
                     added_cond_kwargs=added_cond_kwargs,
                     return_dict=False,

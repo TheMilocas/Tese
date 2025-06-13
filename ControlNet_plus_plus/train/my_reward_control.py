@@ -88,6 +88,18 @@ logger = get_logger(__name__)
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, StateDictType, FullStateDictConfig
 full_state_dict_config = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
 
+def apply_mask(image: Image.Image, mask: Image.Image, fill=(0, 0, 0)) -> Image.Image:
+    """Apply mask to image. Mask is expected to be grayscale (0: keep, 255: replace)."""
+    image = image.convert("RGB")
+    mask = mask.convert("L")
+    image_np = np.array(image)
+    mask_np = np.array(mask)
+    mask_binary = mask_np > 127
+    image_np[mask_binary] = fill
+
+    return Image.fromarray(image_np)
+
+
 def log_validation(
         vae,
         text_encoder,
@@ -209,27 +221,8 @@ def log_validation(
         else:
             validation_condition = Image.open(validation_condition).convert("RGB").resize((512, 512), Image.Resampling.BICUBIC)
 
-        # # === DEBUG LOGGING START ===
-        # # 1) Prompt
-        # print(f"[DEBUG] prompt: {validation_prompt!r}")
-    
-        # # 2) Condition — if it’s a tensor, print its dtype & shape; else its type
-        # if isinstance(validation_condition, torch.Tensor):
-        #     print(f"[DEBUG] validation_condition is tensor, shape={validation_condition.shape}, dtype={validation_condition.dtype}")
-        # else:
-        #     print(f"[DEBUG] validation_condition is {type(validation_condition)}")
-    
-        # # 3) Base image
-        # print(f"[DEBUG] validation_image is {type(validation_image)}")
-        # # you can also convert to tensor to check
-        # img_t = torchvision.transforms.functional.pil_to_tensor(validation_image)
-        # print(f"[DEBUG] validation_image tensor shape: {img_t.shape}, dtype={img_t.dtype}")
-    
-        # # 4) Mask
-        # print(f"[DEBUG] validation_mask is {type(validation_mask)}")
-        # mask_t = torchvision.transforms.functional.pil_to_tensor(validation_mask)
-        # print(f"[DEBUG] validation_mask tensor shape: {mask_t.shape}, dtype={mask_t.dtype}")
-        # # === DEBUG LOGGING END ===
+        if args.dataset_name == "Milocas/celebahq_clean":
+            validation_image = apply_mask(validation_image, validation_mask, fill=(0, 0, 0))
         
         with torch.autocast("cuda"):
             images = pipeline(
@@ -282,7 +275,10 @@ def log_validation(
                 validation_mask = validation_mask.convert("L").resize((512, 512), Image.Resampling.BICUBIC)
             else:
                 validation_condition = Image.open(validation_condition).convert("RGB").resize((512, 512), Image.Resampling.BICUBIC)
-                
+
+            if args.dataset_name == "Milocas/celebahq_clean":
+                validation_image = apply_mask(validation_image, validation_mask, fill=(0, 0, 0))
+            
             with torch.autocast("cuda"):
                 images = pipeline(
                     prompt=[validation_prompt] * args.num_validation_images,
@@ -335,7 +331,7 @@ def log_validation(
                 validation_condition = log["validation_condition"]
 
                 formatted_images.append(wandb.Image(validation_image, caption="Input image"))
-                formatted_images.append(wandb.Image(validation_condition, caption="Conditioning"))
+                #formatted_images.append(wandb.Image(validation_condition, caption="Conditioning"))
                 
                 for image in images:
                     formatted_images.append(wandb.Image(image, caption=validation_prompt))
@@ -1936,7 +1932,8 @@ def main(args):
         controlnet = accelerator.unwrap_model(controlnet)
 
         controlnet.save_pretrained(args.output_dir)
-        ema_controlnet.save_pretrained(args.output_dir + '_ema')
+        if args.use_ema:
+            ema_controlnet.save_pretrained(args.output_dir + '_ema')
 
     if accelerator.is_main_process:
         if args.push_to_hub:

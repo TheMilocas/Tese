@@ -40,4 +40,5 @@ ControlNetFolder/controlnetinpaint/zero_controlnet
 celebahq-idi
 datasets
 wandb
+identity_controlnet_no_masks
 identity_controlnet

@@ -1264,7 +1264,14 @@ class StableDiffusionControlNetInpaintPipeline(
             )
 
         # 4. Prepare image
-        if isinstance(controlnet, ControlNetModel) and control_image[0].ndim != 2:
+        if isinstance(control_image, torch.Tensor) and control_image.ndim == 2:
+            # Likely a batch of embeddings (e.g., [B, 512]) — skip prepare_control_image
+            control_image = control_image.to(device=device, dtype=controlnet.dtype)
+            
+            if self.do_classifier_free_guidance and not guess_mode:
+                control_image = torch.cat([control_image] * 2, dim=0)
+        
+        elif isinstance(controlnet, ControlNetModel):
             control_image = self.prepare_control_image(
                 image=control_image,
                 width=width,
@@ -1278,9 +1285,9 @@ class StableDiffusionControlNetInpaintPipeline(
                 do_classifier_free_guidance=self.do_classifier_free_guidance,
                 guess_mode=guess_mode,
             )
-        elif isinstance(controlnet, MultiControlNetModel) and control_image[0].ndim != 2:
+        
+        elif isinstance(controlnet, MultiControlNetModel):
             control_images = []
-
             for control_image_ in control_image:
                 control_image_ = self.prepare_control_image(
                     image=control_image_,
@@ -1295,24 +1302,12 @@ class StableDiffusionControlNetInpaintPipeline(
                     do_classifier_free_guidance=self.do_classifier_free_guidance,
                     guess_mode=guess_mode,
                 )
-
                 control_images.append(control_image_)
-
             control_image = control_images
+        
         else:
-            control_image = torch.stack(control_image, dim=0)
-        
-            if control_image.shape[0] == 1:
-                repeat_by = batch_size * num_images_per_prompt
-            else:
-                repeat_by = num_images_per_prompt
-        
-            control_image = control_image.repeat_interleave(repeat_by, dim=0)
-        
-            control_image = control_image.to(device=device, dtype=controlnet.dtype)
-        
-            if self.do_classifier_free_guidance and not guess_mode:
-                control_image = torch.cat([control_image] * 2, dim=0)
+            raise ValueError("Unsupported control_image type or controlnet configuration.")
+
 
         # 4.1 Preprocess mask and image - resizes image and mask w.r.t height and width
         original_image = image

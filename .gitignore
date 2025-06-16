@@ -42,3 +42,4 @@ datasets
 wandb
 identity_controlnet_no_masks
 identity_controlnet
+ControlNet_plus_plus/train/comparison_outputs

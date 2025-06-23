@@ -101,7 +101,6 @@ for i in range(processed, NUM_SAMPLES):
     sample = dataset[i]
     name = f"sample_{i:03d}.png"
 
-    # Load and resize
     image = sample["image"].resize((512, 512))
     mask = sample["mask"].resize((512, 512))
 
@@ -134,16 +133,9 @@ for i in range(processed, NUM_SAMPLES):
             generator=torch.Generator(device).manual_seed(42),
         ).images[0]
 
-    # Create and save labeled comparison image
-    # comparison_path = os.path.join(SAVE_DIR, f"{name}_comparison.png")
-    # create_comparison_image(
-    #     images=[image, result_base, result_masked, result_unmasked],
-    #     labels=["Masked Input", "No ControlNet", "ControlNet Masked Embeddings", "ControlNet Unmasked Embeddings"],
-    #     save_path=comparison_path
-    # )
-    image.save(os.path.join(input_dir, name))            # original masked input
-    result_base.save(os.path.join(base_dir, name))       # no controlnet
-    result_masked.save(os.path.join(masked_dir, name))   # controlnet A
-    result_unmasked.save(os.path.join(unmasked_dir, name)) # controlnet B
+    image.save(os.path.join(input_dir, name))
+    result_base.save(os.path.join(base_dir, name))
+    result_masked.save(os.path.join(masked_dir, name))
+    result_unmasked.save(os.path.join(unmasked_dir, name))
 
 print(f"\nAll results saved to: {SAVE_DIR}")

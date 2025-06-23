@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 import numpy as np
-import torchvision.transforms.functional as F
 
 import sys
 import os

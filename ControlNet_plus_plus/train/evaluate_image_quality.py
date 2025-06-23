@@ -8,7 +8,6 @@ from tqdm import tqdm
 from datasets import load_dataset
 from glob import glob
 
-# CONFIG
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 IMAGE_SIZE = 256
 DATASET_NAME = "Milocas/celebahq_clean"

@@ -12,9 +12,9 @@ def load_embedding(path):
 
 original_dir = "../../datasets/celebahq/conditions_no_mask"
 masked_dir = "../../datasets/celebahq/conditions"
-base_dir = "comparison_outputs/embeddings_base"
-masked_out_dir = "comparison_outputs/embeddings_masked"
-unmasked_out_dir = "comparison_outputs/embeddings_unmasked"
+base_dir = "comparison_outputs_random_seed/embeddings_base"
+masked_out_dir = "comparison_outputs_random_seed/embeddings_masked"
+unmasked_out_dir = "comparison_outputs_random_seed/embeddings_unmasked"
 
 get_ids = lambda d: {os.path.splitext(f)[0] for f in os.listdir(d) if f.endswith(".npy")}
 common_ids = get_ids(original_dir) & get_ids(masked_dir) & get_ids(base_dir) & get_ids(masked_out_dir) & get_ids(unmasked_out_dir)

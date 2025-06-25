@@ -54,10 +54,10 @@ def save_embeddings_for_folder(input_folder, output_folder):
         np.save(emb_save_path, emb)
 
 if __name__ == "__main__":
-    base_dir = os.path.abspath("comparison_outputs/base")
-    masked_dir = os.path.abspath("comparison_outputs/masked")
-    unmasked_dir = os.path.abspath("comparison_outputs/unmasked")
+    base_dir = os.path.abspath("comparison_outputs_random_seed/base")
+    masked_dir = os.path.abspath("comparison_outputs_random_seed/masked")
+    unmasked_dir = os.path.abspath("comparison_outputs_random_seed/unmasked")
 
-    save_embeddings_for_folder(base_dir, "comparison_outputs/embeddings_base")
-    save_embeddings_for_folder(masked_dir, "comparison_outputs/embeddings_masked")
-    save_embeddings_for_folder(unmasked_dir, "comparison_outputs/embeddings_unmasked")
+    save_embeddings_for_folder(base_dir, "comparison_outputs_random_seed/embeddings_base")
+    save_embeddings_for_folder(masked_dir, "comparison_outputs_random_seed/embeddings_masked")
+    save_embeddings_for_folder(unmasked_dir, "comparison_outputs_random_seed/embeddings_unmasked")

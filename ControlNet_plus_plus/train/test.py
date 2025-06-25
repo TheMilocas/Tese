@@ -15,7 +15,7 @@ CONTROLNET_A_PATH = "../../identity_controlnet"
 CONTROLNET_B_PATH = "../../identity_controlnet_no_masks"
 EMBEDDING_PREFIX = "../../"
 NUM_SAMPLES = 2953
-SAVE_DIR = "./comparison_outputs"
+SAVE_DIR = "./comparison_outputs_random_seed"
 
 os.makedirs(SAVE_DIR, exist_ok=True)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -112,7 +112,7 @@ for i in range(processed, NUM_SAMPLES):
             image=image,
             mask_image=mask,
             num_inference_steps=25,
-            generator=torch.Generator(device).manual_seed(42),
+            generator=torch.Generator(device).manual_seed(1000+i),
         ).images[0]
 
         result_masked = pipe_controlnet_a(
@@ -121,7 +121,7 @@ for i in range(processed, NUM_SAMPLES):
             mask_image=mask,
             control_image=embedding,
             num_inference_steps=25,
-            generator=torch.Generator(device).manual_seed(42),
+            generator=torch.Generator(device).manual_seed(1000+i),
         ).images[0]
 
         result_unmasked = pipe_controlnet_b(
@@ -130,7 +130,7 @@ for i in range(processed, NUM_SAMPLES):
             mask_image=mask,
             control_image=embedding,
             num_inference_steps=25,
-            generator=torch.Generator(device).manual_seed(42),
+            generator=torch.Generator(device).manual_seed(1000+i),
         ).images[0]
 
     image.save(os.path.join(input_dir, name))

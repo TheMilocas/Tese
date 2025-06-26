@@ -15,53 +15,68 @@ occluded_dir = "../../datasets/celebahq/conditions"
 base_dir = "comparison_outputs_random_seed/embeddings_base"
 masked_out_dir = "comparison_outputs_random_seed/embeddings_masked"
 unmasked_out_dir = "comparison_outputs_random_seed/embeddings_unmasked"
+mask_root = "categorized_masks_debug"
 
-get_ids = lambda d: {os.path.splitext(f)[0] for f in os.listdir(d) if f.endswith(".npy")}
-common_ids = get_ids(original_dir) & get_ids(occluded_dir) & get_ids(base_dir) & get_ids(masked_out_dir) & get_ids(unmasked_out_dir)
-print(f"Found {len(common_ids)} common samples across all sources.")
+categories = ["eyes", "eyes_mouth_nose", "eyes_nose", "mouth_nose", "nose", ""]  # "" is general
 
-results = {
-    "base_vs_original": [],
-    "base_vs_occluded": [],
-    "masked_vs_original": [],
-    "masked_vs_occluded": [],
-    "unmasked_vs_original": [],
-    "unmasked_vs_occluded": [],
-}
+all_results = {}
 
-for sid in tqdm(sorted(common_ids)):
-    try:
-        # original unoccluded image
-        orig = load_embedding(os.path.join(original_dir, f"{sid}.npy")).reshape(1, -1) 
+for category in categories:
+    if category:
+        mask_dir = os.path.join(mask_root, category)
+        mask_files = [f for f in os.listdir(mask_dir) if f.endswith(".png")]
+    else:
+        # General: collect all .pngs from all subdirectories
+        mask_files = []
+        for root, _, files in os.walk(mask_root):
+            for f in files:
+                if f.endswith(".png"):
+                    mask_files.append(f)
+    sample_ids = {
+        str(int(os.path.splitext(f)[0]))
+        for f in mask_files
+        if os.path.splitext(f)[0].isdigit()
+    }
 
-        # original occluded image (mask aplied on top of original image)
-        occl = load_embedding(os.path.join(occluded_dir, f"{sid}.npy")).reshape(1, -1)
+    valid_ids = sample_ids & \
+                {f.split(".")[0] for f in os.listdir(original_dir)} & \
+                {f.split(".")[0] for f in os.listdir(occluded_dir)} & \
+                {f.split(".")[0] for f in os.listdir(base_dir)} & \
+                {f.split(".")[0] for f in os.listdir(masked_out_dir)} & \
+                {f.split(".")[0] for f in os.listdir(unmasked_out_dir)}
 
-        # SD generated image
-        base = load_embedding(os.path.join(base_dir, f"{sid}.npy")).reshape(1, -1) 
+    results = {
+        "base_vs_original": [],
+        "base_vs_occluded": [],
+        "masked_vs_original": [],
+        "masked_vs_occluded": [],
+        "unmasked_vs_original": [],
+        "unmasked_vs_occluded": [],
+    }
 
-        # ControlNet trained on occluded images generated image
-        masked = load_embedding(os.path.join(masked_out_dir, f"{sid}.npy")).reshape(1, -1) 
+    for sid in tqdm(sorted(valid_ids), desc=f"Processing {category or 'general'}"):
+        try:
+            orig = load_embedding(os.path.join(original_dir, f"{sid}.npy")).reshape(1, -1)
+            occl = load_embedding(os.path.join(occluded_dir, f"{sid}.npy")).reshape(1, -1)
+            base = load_embedding(os.path.join(base_dir, f"{sid}.npy")).reshape(1, -1)
+            masked = load_embedding(os.path.join(masked_out_dir, f"{sid}.npy")).reshape(1, -1)
+            unmasked = load_embedding(os.path.join(unmasked_out_dir, f"{sid}.npy")).reshape(1, -1)
 
-        # ControlNet trained on unoccluded images generated image
-        unmasked = load_embedding(os.path.join(unmasked_out_dir, f"{sid}.npy")).reshape(1, -1)
+            results["base_vs_original"].append(cosine_similarity(base, orig)[0, 0])
+            results["base_vs_occluded"].append(cosine_similarity(base, occl)[0, 0])
+            results["masked_vs_original"].append(cosine_similarity(masked, orig)[0, 0])
+            results["masked_vs_occluded"].append(cosine_similarity(masked, occl)[0, 0])
+            results["unmasked_vs_original"].append(cosine_similarity(unmasked, orig)[0, 0])
+            results["unmasked_vs_occluded"].append(cosine_similarity(unmasked, occl)[0, 0])
+        except Exception as e:
+            print(f"Skipping {sid} in '{category or 'general'}' due to: {e}")
 
-
-        results["base_vs_original"].append(cosine_similarity(base, orig)[0, 0])
-        results["base_vs_occluded"].append(cosine_similarity(base, occl)[0, 0])
-
-        results["masked_vs_original"].append(cosine_similarity(masked, orig)[0, 0])
-        results["masked_vs_occluded"].append(cosine_similarity(masked, occl)[0, 0])
-
-        results["unmasked_vs_original"].append(cosine_similarity(unmasked, orig)[0, 0])
-        results["unmasked_vs_occluded"].append(cosine_similarity(unmasked, occl)[0, 0])
-
-    except Exception as e:
-        print(f"Skipping {sid} due to error: {e}")
+    all_results[category or "general"] = results
 
 for key in results:
     results[key] = np.array(results[key])
 
+# Now you're safe to proceed with the analysis
 base = results["base_vs_occluded"]
 masked = results["masked_vs_occluded"]
 unmasked = results["unmasked_vs_occluded"]
@@ -80,10 +95,9 @@ win_counts = {
     )
 }
 
-print("Per-sample winner counts (vs. MASKED input):")
+print(f"\nResults for category: {category or 'general'}")
 for k, v in win_counts.items():
     print(f"{k}: {v} samples")
-    
 
 delta_masked_vs_base = masked - base
 delta_unmasked_vs_base = unmasked - base

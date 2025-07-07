@@ -40,9 +40,12 @@ ControlNetFolder/controlnetinpaint/zero_controlnet
 celebahq-idi
 datasets
 wandb
-identity_controlnet_no_masks
-identity_controlnet
+identity_controlnet_final
+identity_controlnet_old_wrong
 ControlNet_plus_plus/train/comparison_outputs
 ControlNet_plus_plus/train/mask_debug_visuals
 ControlNet_plus_plus/train/comparison_outputs_random_seed
 ControlNet_plus_plus/train/categorized_masks_debug
+ControlNet_plus_plus/train/comparison_outputs_random_seed_train_set
+ControlNet_plus_plus/train/output_old
+ControlNet_plus_plus/train/useless_images

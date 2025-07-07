@@ -1262,6 +1262,9 @@ class StableDiffusionControlNetInpaintPipeline(
                 batch_size * num_images_per_prompt,
                 self.do_classifier_free_guidance,
             )
+        
+        if isinstance(control_image, list):
+            control_image = torch.stack([t.squeeze(0) if t.ndim == 2 and t.shape[0] == 1 else t for t in control_image], dim=0)
 
         # 4. Prepare image
         if isinstance(control_image, torch.Tensor) and control_image.ndim == 2:
@@ -1270,27 +1273,10 @@ class StableDiffusionControlNetInpaintPipeline(
             
             if self.do_classifier_free_guidance and not guess_mode:
                 control_image = torch.cat([control_image] * 2, dim=0)
-        
-        elif isinstance(controlnet, ControlNetModel):
-            control_image = self.prepare_control_image(
-                image=control_image,
-                width=width,
-                height=height,
-                batch_size=batch_size * num_images_per_prompt,
-                num_images_per_prompt=num_images_per_prompt,
-                device=device,
-                dtype=controlnet.dtype,
-                crops_coords=crops_coords,
-                resize_mode=resize_mode,
-                do_classifier_free_guidance=self.do_classifier_free_guidance,
-                guess_mode=guess_mode,
-            )
-        
-        elif isinstance(controlnet, MultiControlNetModel):
-            control_images = []
-            for control_image_ in control_image:
-                control_image_ = self.prepare_control_image(
-                    image=control_image_,
+        else:
+            if isinstance(controlnet, ControlNetModel):
+                control_image = self.prepare_control_image(
+                    image=control_image,
                     width=width,
                     height=height,
                     batch_size=batch_size * num_images_per_prompt,
@@ -1302,11 +1288,28 @@ class StableDiffusionControlNetInpaintPipeline(
                     do_classifier_free_guidance=self.do_classifier_free_guidance,
                     guess_mode=guess_mode,
                 )
-                control_images.append(control_image_)
-            control_image = control_images
+            
+            elif isinstance(controlnet, MultiControlNetModel):
+                control_images = []
+                for control_image_ in control_image:
+                    control_image_ = self.prepare_control_image(
+                        image=control_image_,
+                        width=width,
+                        height=height,
+                        batch_size=batch_size * num_images_per_prompt,
+                        num_images_per_prompt=num_images_per_prompt,
+                        device=device,
+                        dtype=controlnet.dtype,
+                        crops_coords=crops_coords,
+                        resize_mode=resize_mode,
+                        do_classifier_free_guidance=self.do_classifier_free_guidance,
+                        guess_mode=guess_mode,
+                    )
+                    control_images.append(control_image_)
+                control_image = control_images
         
-        else:
-            raise ValueError("Unsupported control_image type or controlnet configuration.")
+            else:
+                raise ValueError("Unsupported control_image type or controlnet configuration.")
 
 
         # 4.1 Preprocess mask and image - resizes image and mask w.r.t height and width

@@ -11,8 +11,7 @@ import os
 
 # ========== CONFIG ==========
 DATASET_NAME = "Milocas/celebahq_masked"
-CONTROLNET_A_PATH = "../../identity_controlnet"
-CONTROLNET_B_PATH = "../../identity_controlnet_no_masks"
+CONTROLNET_PATH = "../../identity_controlnet_final"
 EMBEDDING_PREFIX = "../../"
 NUM_SAMPLES = 2953
 SAVE_DIR = "./comparison_outputs_random_seed"
@@ -21,11 +20,10 @@ os.makedirs(SAVE_DIR, exist_ok=True)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 base_dir = os.path.join(SAVE_DIR, "base")
-masked_dir = os.path.join(SAVE_DIR, "masked")
-unmasked_dir = os.path.join(SAVE_DIR, "unmasked")
+controlnet_dir = os.path.join(SAVE_DIR, "controlnet")
 input_dir = os.path.join(SAVE_DIR, "input")
 
-for d in [base_dir, masked_dir, unmasked_dir, input_dir]:
+for d in [base_dir, controlnet_dir, input_dir]:
     os.makedirs(d, exist_ok=True)
     
 # ========== LOAD DATASET ==========
@@ -43,54 +41,17 @@ pipe_base.scheduler = DDIMScheduler.from_config(pipe_base.scheduler.config)
 pipe_base.enable_model_cpu_offload()
 
 print("Loading ControlNet Masked Embeddings")
-controlnet_a = ControlNetModel.from_pretrained(CONTROLNET_A_PATH, torch_dtype=torch.float32).to(device)
+controlnet = ControlNetModel.from_pretrained(CONTROLNET_PATH, torch_dtype=torch.float32).to(device)
 
-print("Loading ControlNet Unmasked Embeddings")
-controlnet_b = ControlNetModel.from_pretrained(CONTROLNET_B_PATH, torch_dtype=torch.float32).to(device)
-
-print("Loading pipeline with ControlNet Masked Embeddings")
-pipe_controlnet_a = StableDiffusionControlNetInpaintPipeline.from_pretrained(
+print("Loading pipeline with ControlNet")
+pipe_controlnet = StableDiffusionControlNetInpaintPipeline.from_pretrained(
     "runwayml/stable-diffusion-inpainting",
-    controlnet=controlnet_a,
+    controlnet=controlnet,
     torch_dtype=torch.float16 if device.type == "cuda" else torch.float32, safety_checker = None, requires_safety_checker = False
 
 ).to(device)
-pipe_controlnet_a.scheduler = DDIMScheduler.from_config(pipe_controlnet_a.scheduler.config)
-pipe_controlnet_a.enable_model_cpu_offload()
-
-print("Loading pipeline with ControlNet Unmasked Embeddings")
-pipe_controlnet_b = StableDiffusionControlNetInpaintPipeline.from_pretrained(
-    "runwayml/stable-diffusion-inpainting",
-    controlnet=controlnet_b,
-    torch_dtype=torch.float16 if device.type == "cuda" else torch.float32, safety_checker = None, requires_safety_checker = False
-
-).to(device)
-pipe_controlnet_b.scheduler = DDIMScheduler.from_config(pipe_controlnet_b.scheduler.config)
-pipe_controlnet_b.enable_model_cpu_offload()
-
-# ========== IMAGE COMPARISON UTILITY ==========
-def create_comparison_image(images, labels, save_path):
-    assert len(images) == len(labels), "Images and labels must match"
-
-    width, height = images[0].size
-    label_height = 30
-    font_size = 20
-
-    try:
-        font = ImageFont.truetype("arial.ttf", font_size)
-    except:
-        font = ImageFont.load_default()
-
-    result = Image.new("RGB", (width * len(images), height + label_height), "white")
-    draw = ImageDraw.Draw(result)
-
-    for i, (img, label) in enumerate(zip(images, labels)):
-        x = i * width
-        result.paste(img, (x, 0))
-        text_width = draw.textlength(label, font=font)
-        draw.text((x + (width - text_width) // 2, height + 5), label, fill="black", font=font)
-
-    result.save(save_path)
+pipe_controlnet.scheduler = DDIMScheduler.from_config(pipe_controlnet.scheduler.config)
+pipe_controlnet.enable_model_cpu_offload()
 
 # ========== PROCESS MULTIPLE SAMPLES ==========
 processed = len(os.listdir(base_dir))
@@ -115,16 +76,7 @@ for i in range(processed, NUM_SAMPLES):
             generator=torch.Generator(device).manual_seed(1000+i),
         ).images[0]
 
-        result_masked = pipe_controlnet_a(
-            prompt="",
-            image=image,
-            mask_image=mask,
-            control_image=embedding,
-            num_inference_steps=25,
-            generator=torch.Generator(device).manual_seed(1000+i),
-        ).images[0]
-
-        result_unmasked = pipe_controlnet_b(
+        result_controlnet = pipe_controlnet(
             prompt="",
             image=image,
             mask_image=mask,
@@ -135,7 +87,6 @@ for i in range(processed, NUM_SAMPLES):
 
     image.save(os.path.join(input_dir, name))
     result_base.save(os.path.join(base_dir, name))
-    result_masked.save(os.path.join(masked_dir, name))
-    result_unmasked.save(os.path.join(unmasked_dir, name))
+    result_controlnet.save(os.path.join(controlnet_dir, name))
 
 print(f"\nAll results saved to: {SAVE_DIR}")

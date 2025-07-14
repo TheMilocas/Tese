@@ -11,10 +11,10 @@ import os
 
 # ========== CONFIG ==========
 DATASET_NAME = "Milocas/celebahq_masked"
-CONTROLNET_PATH = "../../identity_controlnet_final"
+CONTROLNET_PATH = "../../identity_controlnet_face_specific"
 EMBEDDING_PREFIX = "../../"
 NUM_SAMPLES = 2953
-SAVE_DIR = "./comparison_outputs_random_seed"
+SAVE_DIR = "./comparison_outputs_random_seed_face_set"
 
 os.makedirs(SAVE_DIR, exist_ok=True)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

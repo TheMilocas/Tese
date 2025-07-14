@@ -1312,6 +1312,8 @@ def main(args):
         args.pretrained_model_name_or_path, subfolder="text_encoder", revision=args.revision
     )
     vae = AutoencoderKL.from_pretrained(args.pretrained_model_name_or_path, subfolder="vae", revision=args.revision)
+    #vae = AutoencoderKL.from_pretrained("stabilityai/sd-vae-ft-mse")
+
     unet = UNet2DConditionModel.from_pretrained(
         args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision
     )

@@ -54,8 +54,8 @@ def save_embeddings_for_folder(input_folder, output_folder):
         np.save(emb_save_path, emb)
 
 if __name__ == "__main__":
-    base_dir = os.path.abspath("comparison_outputs_random_seed/base")
-    controlnet_dir = os.path.abspath("comparison_outputs_random/controlnet")
+    base_dir = os.path.abspath("comparison_outputs_random_seed_face_set/base")
+    controlnet_dir = os.path.abspath("comparison_outputs_random_seed_face_set/controlnet")
 
-    save_embeddings_for_folder(base_dir, "comparison_outputs_random_seed/embeddings_base")
-    save_embeddings_for_folder(controlnet_dir, "comparison_outputs_random_seed/embeddings_controlnet")
+    save_embeddings_for_folder(base_dir, "comparison_outputs_random_seed_face_set/embeddings_base")
+    save_embeddings_for_folder(controlnet_dir, "comparison_outputs_random_seed_face_set/embeddings_controlnet")

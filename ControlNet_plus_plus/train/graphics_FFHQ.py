@@ -11,16 +11,10 @@ matplotlib.use("Agg")  # For headless environments
 DATASET_NAME = "Milocas/celebahq_masked"
 CLEAN_DATASET_NAME = "Milocas/celebahq_clean"
 SAVE_DIR = "./comparison_outputs_random_seed_face_set"
-EMBEDDING_PREFIX = "../../"
+FFHQ_EMBEDDINGS_DIR = "./comparison_outputs_random_seed_FFHQ_set/input_embeddings"
 
 base_embedding_dir = os.path.join(SAVE_DIR, "embeddings_base")
 controlnet_embedding_dir = os.path.join(SAVE_DIR, "embeddings_controlnet")
-
-# ========== LOAD DATA ==========
-print("Loading datasets...")
-dataset = load_dataset(DATASET_NAME, split="test")
-clean_dataset = load_dataset(CLEAN_DATASET_NAME, split="test")
-
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # ========== METRICS ==========
@@ -34,14 +28,10 @@ controlnet_vs_original = []
 valid_indices = []
 
 num_samples = len([f for f in os.listdir(base_embedding_dir) if os.path.isfile(os.path.join(base_embedding_dir, f))])
-# num_samples = min(len(dataset), len(clean_dataset))
 
 for i in tqdm(range(num_samples), desc="Evaluating full dataset"):
     try:
-        sample = dataset[i]
-        clean_sample = clean_dataset[i]
-
-        original_embedding = torch.from_numpy(np.load(os.path.join(EMBEDDING_PREFIX, clean_sample["condition"]))).squeeze(0)
+        original_embedding = torch.from_numpy(np.load(os.path.join(FFHQ_EMBEDDINGS_DIR, f"{i:03d}.npy"))).squeeze(0)
         base_embedding = torch.from_numpy(np.load(os.path.join(base_embedding_dir, f"{i:03d}.npy"))).squeeze(0)
         controlnet_embedding = torch.from_numpy(np.load(os.path.join(controlnet_embedding_dir, f"{i:03d}.npy"))).squeeze(0)
 
@@ -66,25 +56,7 @@ plt.title("Cosine Similarity to Original Embedding (Full Dataset)")
 plt.legend()
 plt.grid(True)
 plt.tight_layout()
-plt.savefig("similarity_hist_face.png")
-
-# CDF
-def plot_cdf(data, label):
-    sorted_data = np.sort(data)
-    cdf = np.arange(len(sorted_data)) / len(sorted_data)
-    plt.plot(sorted_data, cdf, label=label)
-
-plt.figure(figsize=(10, 6))
-plot_cdf(base_vs_original, "Base vs Original")
-plot_cdf(controlnet_vs_original, "ControlNet vs Original")
-plt.axvline(0, color='k', linestyle='--', linewidth=1)
-plt.xlabel("Cosine Similarity")
-plt.ylabel("Cumulative Proportion")
-plt.title("CDF of Cosine Similarity (Full Dataset)")
-plt.legend()
-plt.grid(True)
-plt.tight_layout()
-plt.savefig("similarity_cdf_face.png")
+plt.savefig("similarity_hist_FFHQ.png")
 
 # Delta Histogram
 delta = controlnet_vs_original - base_vs_original
@@ -97,7 +69,7 @@ plt.xlabel("Cosine Similarity Difference")
 plt.ylabel("Frequency")
 plt.grid(True)
 plt.tight_layout()
-plt.savefig("similarity_delta_hist_face.png")
+plt.savefig("similarity_delta_hist_FFHQ.png")
 
 # Descriptive Statistics
 print(f"\n--- Cosine Similarity Delta Stats (ControlNet - Base) ---")

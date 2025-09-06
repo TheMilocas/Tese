@@ -11,10 +11,10 @@ import os
 
 # ========== CONFIG ==========
 DATASET_NAME = "Milocas/celebahq_masked"
-CONTROLNET_PATH = "../../identity_controlnet_face_specific"
+CONTROLNET_PATH = "../../identity_controlnet_final"
 EMBEDDING_PREFIX = "../../"
 NUM_SAMPLES = 2953
-SAVE_DIR = "./comparison_outputs_random_seed_face_set"
+SAVE_DIR = "./comparison_outputs_random_seed_augmented_control"
 
 os.makedirs(SAVE_DIR, exist_ok=True)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -60,7 +60,7 @@ print(f"Resuming from sample {processed}")
 for i in range(processed, NUM_SAMPLES):
     print(f"[{i+1}/{NUM_SAMPLES}] Processing sample...")
     sample = dataset[i]
-    name = f"sample_{i:03d}.png"
+    name = f"{i:03d}.png"
 
     image = sample["image"].resize((512, 512))
     mask = sample["mask"].resize((512, 512))
@@ -81,6 +81,7 @@ for i in range(processed, NUM_SAMPLES):
             image=image,
             mask_image=mask,
             control_image=embedding,
+            controlnet_conditioning_scale=0.7,
             num_inference_steps=25,
             generator=torch.Generator(device).manual_seed(1000+i),
         ).images[0]

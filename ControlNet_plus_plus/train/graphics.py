@@ -10,7 +10,7 @@ matplotlib.use("Agg")  # For headless environments
 # ========== CONFIG ==========
 DATASET_NAME = "Milocas/celebahq_masked"
 CLEAN_DATASET_NAME = "Milocas/celebahq_clean"
-SAVE_DIR = "./comparison_outputs_random_seed_face_set"
+SAVE_DIR = "./comparison_outputs_random_seed_augmented_control"
 EMBEDDING_PREFIX = "../../"
 
 base_embedding_dir = os.path.join(SAVE_DIR, "embeddings_base")
@@ -66,25 +66,25 @@ plt.title("Cosine Similarity to Original Embedding (Full Dataset)")
 plt.legend()
 plt.grid(True)
 plt.tight_layout()
-plt.savefig("similarity_hist_face.png")
+plt.savefig("similarity_hist_augmented.png")
 
-# CDF
-def plot_cdf(data, label):
-    sorted_data = np.sort(data)
-    cdf = np.arange(len(sorted_data)) / len(sorted_data)
-    plt.plot(sorted_data, cdf, label=label)
+# # CDF
+# def plot_cdf(data, label):
+#     sorted_data = np.sort(data)
+#     cdf = np.arange(len(sorted_data)) / len(sorted_data)
+#     plt.plot(sorted_data, cdf, label=label)
 
-plt.figure(figsize=(10, 6))
-plot_cdf(base_vs_original, "Base vs Original")
-plot_cdf(controlnet_vs_original, "ControlNet vs Original")
-plt.axvline(0, color='k', linestyle='--', linewidth=1)
-plt.xlabel("Cosine Similarity")
-plt.ylabel("Cumulative Proportion")
-plt.title("CDF of Cosine Similarity (Full Dataset)")
-plt.legend()
-plt.grid(True)
-plt.tight_layout()
-plt.savefig("similarity_cdf_face.png")
+# plt.figure(figsize=(10, 6))
+# plot_cdf(base_vs_original, "Base vs Original")
+# plot_cdf(controlnet_vs_original, "ControlNet vs Original")
+# plt.axvline(0, color='k', linestyle='--', linewidth=1)
+# plt.xlabel("Cosine Similarity")
+# plt.ylabel("Cumulative Proportion")
+# plt.title("CDF of Cosine Similarity (Full Dataset)")
+# plt.legend()
+# plt.grid(True)
+# plt.tight_layout()
+# plt.savefig("similarity_cdf_face.png")
 
 # Delta Histogram
 delta = controlnet_vs_original - base_vs_original
@@ -97,7 +97,7 @@ plt.xlabel("Cosine Similarity Difference")
 plt.ylabel("Frequency")
 plt.grid(True)
 plt.tight_layout()
-plt.savefig("similarity_delta_hist_face.png")
+plt.savefig("similarity_delta_hist_augmented.png")
 
 # Descriptive Statistics
 print(f"\n--- Cosine Similarity Delta Stats (ControlNet - Base) ---")
@@ -109,7 +109,7 @@ print(f"> 0.05 improvement: {(delta > 0.05).sum()} samples")
 print(f"< 0 (worse): {(delta < 0).sum()} samples")
 
 # Save raw data
-np.savez("cosine_similarity_results_full_face.npz",
+np.savez("cosine_similarity_results_full_augmented.npz",
          base_vs_original=base_vs_original,
          controlnet_vs_original=controlnet_vs_original,
          delta=delta,

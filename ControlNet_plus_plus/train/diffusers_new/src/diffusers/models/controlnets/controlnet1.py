@@ -257,6 +257,28 @@ class ControlNetConditioningEmbedding(nn.Module):
     (activated by ReLU, channels are 16, 32, 64, 128, initialized with Gaussian weights, trained jointly with the full
     model) to encode image-space conditions ... into feature maps ..."
     """
+# class IdentityUpsampleEncoder(nn.Module):
+#     def __init__(
+#         self, 
+#         conditioning_embedding_channels=1280, 
+#         conditioning_dim=512, 
+#         target_shape=(1280, 8, 8)
+#     ):
+#         super().__init__()
+#         c_out, H, W = target_shape
+#         self.fc = nn.Linear(conditioning_dim, 512 * 4 * 4)
+#         self.expand_conv = nn.Conv2d(512, c_out, kernel_size=3, padding=1)
+#         self.upsample = nn.Upsample(scale_factor=2, mode='nearest')  
+#         self.out_conv = zero_module(nn.Conv2d(c_out, conditioning_embedding_channels, kernel_size=3, padding=1))
+
+#     def forward(self, x):
+#         B = x.size(0)
+#         x = self.fc(x).view(B, 512, 4, 4)   # B, 512, 4, 4
+#         x = self.upsample(x)                # B, 512, 8, 8
+#         x = self.expand_conv(x)             # B, 1280, 8, 8
+#         x = self.out_conv(x)                # B, 1280, 8, 8
+#         return x
+    
     def __init__(
         self, 
         conditioning_embedding_channels: int, 
@@ -285,17 +307,11 @@ class ControlNetConditioningEmbedding(nn.Module):
 
         temb_channels = getattr(self.block1, "temb_channels", 512)
         temb = torch.zeros(x.size(0), temb_channels, device=x.device)
-        #print(x.shape)
         x = self.block1(x, temb)
-        #print(x.shape)
         x = self.upsample1(x)
-        #print(x.shape)
         x = self.block2(x, temb)
-        #print(x.shape)
         x = self.block3(x, temb)
-        #print(x.shape)        
         x = self.out_conv(x)
-        #print(x.shape)
        
         return x
 

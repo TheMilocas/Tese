@@ -8,10 +8,8 @@ import matplotlib
 matplotlib.use("Agg")  # For headless environments
 
 # ========== CONFIG ==========
-DATASET_NAME = "Milocas/celebahq_masked"
-CLEAN_DATASET_NAME = "Milocas/celebahq_clean"
-SAVE_DIR = "./comparison_outputs_random_seed_face_set"
-FFHQ_EMBEDDINGS_DIR = "./comparison_outputs_random_seed_FFHQ_set/input_embeddings"
+SAVE_DIR = "./comparison_outputs_random_seed_new_FFHQ_set1"
+FFHQ_EMBEDDINGS_DIR = "./comparison_outputs_random_seed_new_FFHQ_set/input_embeddings"
 
 base_embedding_dir = os.path.join(SAVE_DIR, "embeddings_base")
 controlnet_embedding_dir = os.path.join(SAVE_DIR, "embeddings_controlnet")
@@ -56,7 +54,7 @@ plt.title("Cosine Similarity to Original Embedding (Full Dataset)")
 plt.legend()
 plt.grid(True)
 plt.tight_layout()
-plt.savefig("similarity_hist_FFHQ.png")
+plt.savefig("similarity_hist_new_FFHQ1.png")
 
 # Delta Histogram
 delta = controlnet_vs_original - base_vs_original
@@ -69,7 +67,7 @@ plt.xlabel("Cosine Similarity Difference")
 plt.ylabel("Frequency")
 plt.grid(True)
 plt.tight_layout()
-plt.savefig("similarity_delta_hist_FFHQ.png")
+plt.savefig("similarity_delta_hist_new_FFHQ1.png")
 
 # Descriptive Statistics
 print(f"\n--- Cosine Similarity Delta Stats (ControlNet - Base) ---")
@@ -81,7 +79,7 @@ print(f"> 0.05 improvement: {(delta > 0.05).sum()} samples")
 print(f"< 0 (worse): {(delta < 0).sum()} samples")
 
 # Save raw data
-np.savez("cosine_similarity_results_full_face.npz",
+np.savez("cosine_similarity_results_new_FFHQ1.npz",
          base_vs_original=base_vs_original,
          controlnet_vs_original=controlnet_vs_original,
          delta=delta,

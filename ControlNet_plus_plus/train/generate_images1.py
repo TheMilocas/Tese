@@ -15,7 +15,7 @@ CONTROLNET_PATH = "../../identity_controlnet_face_specific"
 EMB_DIR = "./comparison_outputs_random_seed_FFHQ_set/input_embeddings"
 IMG_DIR = "./comparison_outputs_random_seed_FFHQ_set/input"
 NUM_SAMPLES = 2953
-SAVE_DIR = "./comparison_outputs_random_seed_FFHQ_set"
+SAVE_DIR = "./comparison_outputs_random_seed_FFHQ_set1"
 
 os.makedirs(SAVE_DIR, exist_ok=True)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -23,6 +23,8 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 base_dir = os.path.join(SAVE_DIR, "base")
 controlnet_dir = os.path.join(SAVE_DIR, "controlnet")
 input_dir = os.path.join(SAVE_DIR, "input")
+
+input_img_dir = IMG_DIR
 
 for d in [base_dir, controlnet_dir, input_dir]:
     os.makedirs(d, exist_ok=True)
@@ -65,7 +67,7 @@ for i in range(processed, NUM_SAMPLES):
     mask_sample = dataset_masks[i]
     mask = mask_sample["mask"].resize((512, 512))
 
-    image_masked_path = os.path.join(input_dir, name)
+    image_masked_path = os.path.join(input_img_dir, name)
     image = Image.open(image_masked_path).convert("RGB")
     
     embedding_path = os.path.join(EMB_DIR, f"{i:03d}.npy")
@@ -77,7 +79,7 @@ for i in range(processed, NUM_SAMPLES):
             image=image,
             mask_image=mask,
             num_inference_steps=25,
-            generator=torch.Generator(device).manual_seed(1000+i),
+            generator=torch.Generator(device).manual_seed(2000+i),
         ).images[0]
 
         result_controlnet = pipe_controlnet(
@@ -86,7 +88,7 @@ for i in range(processed, NUM_SAMPLES):
             mask_image=mask,
             control_image=embedding,
             num_inference_steps=25,
-            generator=torch.Generator(device).manual_seed(1000+i),
+            generator=torch.Generator(device).manual_seed(2000+i),
         ).images[0]
 
     #image.save(os.path.join(input_dir, name))

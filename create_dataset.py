@@ -10,7 +10,7 @@ def to_columns(records):
         columns["mask"].append(r["mask"])
     return columns
 
-def build_celebahq_dataset(image_dir, condition_dir, mask_dir, output_path):
+def build_celebahq_dataset(image_dir, condition_dir, mask_file, output_path):
     image_files = sorted(os.listdir(image_dir))
     
     records = []
@@ -18,14 +18,21 @@ def build_celebahq_dataset(image_dir, condition_dir, mask_dir, output_path):
         base_name = os.path.splitext(fname)[0]
         image_path = os.path.join(image_dir, fname)
         condition_path = os.path.join(condition_dir, f"{base_name}.npy")
-        mask_path = os.path.join(mask_dir, f"{base_name}.png")
+        # mask_path = os.path.join(mask_dir, f"{base_name}.png")
+        if not os.path.exists(image_path):
+            print("Missing image:", image_path)
+        if not os.path.exists(condition_path):
+            print("Missing condition:", condition_path)
+        if not os.path.exists(mask_file):
+            print("Missing mask file:", mask_file)    
         
-        if os.path.exists(image_path) and os.path.exists(condition_path) and os.path.exists(mask_path):
+        if os.path.exists(image_path) and os.path.exists(condition_path) and os.path.exists(mask_file):
             records.append({
                 "image": image_path,
                 "condition": condition_path,
-                "mask": mask_path
+                "mask": mask_file
             })
+
 
     features = Features({
         "image": Image(),
@@ -59,16 +66,16 @@ base_path = "datasets/celebahq"
 
 # Dataset 1: With occlusion
 build_celebahq_dataset(
-    image_dir=os.path.join(base_path, "masked_images"),
-    condition_dir=os.path.join(base_path, "conditions"),
-    mask_dir=os.path.join(base_path, "mask"),
-    output_path=os.path.join(base_path, "hf_celebahq_masked")
-)
-
-# Dataset 2: Without occlusion
-build_celebahq_dataset(
     image_dir=os.path.join(base_path, "image"),
     condition_dir=os.path.join(base_path, "conditions_no_mask"),
-    mask_dir=os.path.join(base_path, "mask"),
-    output_path=os.path.join(base_path, "hf_celebahq_clean")
+    mask_file=os.path.join(base_path, "mask.png"),
+    output_path=os.path.join(base_path, "hf_celebahq_mask")
 )
+
+# # Dataset 2: Without occlusion
+# build_celebahq_dataset(
+#     image_dir=os.path.join(base_path, "image"),
+#     condition_dir=os.path.join(base_path, "conditions_no_mask"),
+#     mask_dir=os.path.join(base_path, "mask"),
+#     output_path=os.path.join(base_path, "hf_celebahq_clean")
+# )

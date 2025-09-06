@@ -10,9 +10,9 @@ from backbones.iresnet import iresnet100
 # ========== CONFIG ==========
 MODEL_PATH = "ARCFACE/models/R100_MS1MV3/backbone.pth"
 IMAGE_DATASET = "Ryan-sjtu/ffhq512-caption"
-MASK_DATASET = "Milocas/celebahq_masked"
-EMB_SAVE_DIR = "./ControlNet_plus_plus/train/comparison_outputs_random_seed_FFHQ_set/input_embeddings"
-IMG_SAVE_DIR = "./ControlNet_plus_plus/train/comparison_outputs_random_seed_FFHQ_set/input"
+MASK_DIR = "./mask.png"
+EMB_SAVE_DIR = "./ControlNet_plus_plus/train/comparison_outputs_random_seed_new_FFHQ_set/input_embeddings"
+IMG_SAVE_DIR = "./ControlNet_plus_plus/train/comparison_outputs_random_seed_new_FFHQ_set/input"
 NUM_SAMPLES = 2953
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 os.makedirs(EMB_SAVE_DIR, exist_ok=True)
@@ -62,16 +62,13 @@ def apply_mask_to_image(image: Image.Image, mask: Image.Image, fill_color=(0, 0,
 # ========== LOAD DATASETS ==========
 print("Loading datasets...")
 dataset_images = load_dataset(IMAGE_DATASET, split="train")
-dataset_masks = load_dataset(MASK_DATASET, split="train")
-
-assert len(dataset_images) >= NUM_SAMPLES and len(dataset_masks) >= NUM_SAMPLES, "Not enough samples in one of the datasets."
 
 # ========== PROCESS ==========
 for i in range(NUM_SAMPLES):
     print(f"[{i+1}/{NUM_SAMPLES}] Processing sample...")
 
     image = dataset_images[i]["image"].resize((512, 512))
-    mask = dataset_masks[i]["mask"].resize((512, 512))
+    mask = Image.open(MASK_DIR).resize((512, 512))
 
     image_masked = apply_mask_to_image(image, mask, fill_color=(0, 0, 0))
     

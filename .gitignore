@@ -40,6 +40,8 @@ ControlNetFolder/controlnetinpaint/zero_controlnet
 celebahq-idi
 datasets
 wandb
+pretrained
+identity_controlnet_last
 identity_controlnet_final
 identity_controlnet_old_wrong
 identity_controlnet_face_specific
@@ -75,4 +77,17 @@ ControlNet_plus_plus/train/comparison_outputs_random_seed_new_FFHQ_set1
 ControlNet_plus_plus/train/comparison_outputs_random_seed_new_FFHQ_set_cs_07
 ControlNet_plus_plus/train/temp
 ControlNet_plus_plus/train/temp_outputs
-
+ControlNet_plus_plus/train/COMPARE_PVA
+ControlNet_plus_plus/train/COMPARE_IDS_CONTROLNET
+ControlNet_plus_plus/train/DATASETS_FOR_TESTING
+ControlNet_plus_plus/train/DATASET_EVAL
+ControlNet_plus_plus/train/EYES_CELEBHQ_TRAIN_DEFAULT_EVAL
+ControlNet_plus_plus/train/EVALUATE_CONTROLNET_SCALE
+ControlNet_plus_plus/train/TEST_CELEBAHQ
+ControlNet_plus_plus/train/TEST_FFHQ
+ControlNet_plus_plus/train/SAME_ID
+ControlNet_plus_plus/train/COUNDING_BOXES_MASKS
+ControlNet_plus_plus/train/UNUSED_THINGS
+ControlNet_plus_plus/train/SEED_RANDOMNESS_TEST
+EVAL
+PVA-CelebAHQ-IDI

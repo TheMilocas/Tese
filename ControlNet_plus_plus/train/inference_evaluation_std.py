@@ -19,7 +19,7 @@ import matplotlib
 matplotlib.use("Agg")
 
 # ========== CONFIG ==========
-CONTROLNET_PATH = "../../identity_controlnet_final"
+CONTROLNET_PATH = "../../identity_controlnet_single_mask"
 EMB_DIR = "./FFHQ_inputs/input_embeddings"
 IMG_DIR = "./FFHQ_inputs/input"
 MASK_PATH = "./mask.png"

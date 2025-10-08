@@ -38,7 +38,7 @@ def embedding_to_text_image(embedding, width=256, height=20, font_size=12):
         font = ImageFont.load_default()
 
     emb = embedding.detach().cpu().numpy().flatten()
-    emb_text = " ".join(f"{x:.2f}" for x in emb[:10])  # Show first 10 dims
+    emb_text = " ".join(f"{x:.2f}" for x in emb[:10])
 
     img = Image.new("RGB", (width, height), "white")
     draw = ImageDraw.Draw(img)
@@ -67,15 +67,12 @@ def create_comparison_grid(images, embeddings, labels, original_embedding, save_
         x = i * width
         result.paste(img, (x, 0))
 
-        # Label
         text_width = draw.textlength(label, font=font)
         draw.text((x + (width - text_width) // 2, height + 2), label, fill="black", font=font)
 
-        # Embedding snippet as text image
         text_img = embedding_to_text_image(emb, width=width, height=text_height)
         result.paste(text_img, (x, height + label_height))
 
-        # Cosine similarity (not for original itself)
         if i > 0:
             sim = cosine_similarity(original_embedding, emb)
             sim_text = f"Cosine w/ original: {sim:.3f}"

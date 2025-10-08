@@ -1574,6 +1574,7 @@ def main(args):
         reward_loss_per_epoch = 0.
 
         train_loss, train_pretrain_loss, train_reward_loss = 0., 0., 0.
+        train_triplet_loss, train_recon_loss = 0., 0.
 
         for step, batch in enumerate(train_dataloader):
             with accelerator.accumulate(controlnet):
@@ -1702,6 +1703,23 @@ def main(args):
                 pred_original_sample = 1 / vae.config.scaling_factor * pred_original_sample
                 image = vae.decode(pred_original_sample.to(weight_dtype)).sample
                 image = (image / 2 + 0.5).clamp(0, 1)
+
+                # # Masked Reconstruction Loss
+                # if args.task_name == 'identity':
+                #     # Ground truth image (already normalized [-1,1] in dataset)
+                #     gt_image = batch["pixel_values"].to(accelerator.device, dtype=weight_dtype)
+                #     gt_image = (gt_image / 2 + 0.5).clamp(0, 1)  # scale like decoded image
+                
+                #     # Mask (B,1,H,W)
+                #     mask = batch["mask"].to(accelerator.device)
+                #     mask = torchvision.transforms.functional.resize(mask, gt_image.shape[-2:])
+                
+                #     masked_gt = gt_image * mask
+                #     masked_pred = image * mask
+                
+                #     recon_loss = F.l1_loss(masked_pred, masked_gt)
+                # else:
+                recon_loss = torch.tensor(0.0, device=accelerator.device)
                 
                 if args.task_name == 'identity':
                     with torch.no_grad():
@@ -1720,6 +1738,24 @@ def main(args):
                         reward_loss = 1 - F.cosine_similarity(generated_embeddings, original_embeddings)
                         outputs = generated_embeddings
                         labels = original_embeddings
+
+                        # Triplet Loss: anchor = generated, 
+                        #               positive = original, 
+                        #               negative = another identity in batch
+                        margin = getattr(args, "triplet_margin", 0.3)
+                        triplet_scale = getattr(args, "triplet_scale", 0.5)
+                        
+                        anchor = generated_embeddings
+                        positive = original_embeddings
+                        negative = torch.roll(original_embeddings, shifts=1, dims=0)  # shift batch as negatives
+                        
+                        pos_dist = 1 - F.cosine_similarity(anchor, positive)
+                        neg_dist = 1 - F.cosine_similarity(anchor, negative)
+                        triplet_loss = torch.clamp(pos_dist - neg_dist + margin, min=0.0).mean()
+                        
+                        # Add to reward loss
+                        reward_loss = reward_loss.mean() + triplet_scale * triplet_loss
+
                         
                 else:
                     # image normalization, depends on different reward models
@@ -1786,8 +1822,14 @@ def main(args):
                 
                 # calculate the reward loss
                 if args.task_name == 'identity':
-                    reward_loss = reward_loss.mean()
-                    loss = pretrain_loss + reward_loss * args.grad_scale
+                    reward_loss = reward_loss  # already averaged + triplet added
+                    recon_scale = getattr(args, "recon_scale", 1.0)
+                
+                    loss = (
+                        pretrain_loss
+                        + reward_loss * args.grad_scale
+                        + recon_loss * recon_scale
+                    )
                 else:
                     reward_loss = get_reward_loss(outputs, labels, args.task_name, reduction='none')
                 
@@ -1817,7 +1859,14 @@ def main(args):
                 train_loss += avg_loss.item() / args.gradient_accumulation_steps
                 train_pretrain_loss += avg_pretrain_loss.item() / args.gradient_accumulation_steps
                 train_reward_loss += avg_reward_loss.item() / args.gradient_accumulation_steps
+
+                if args.task_name == "identity":
+                    avg_triplet_loss = accelerator.gather(triplet_loss.repeat(args.train_batch_size)).mean()
+                    avg_recon_loss = accelerator.gather(recon_loss.repeat(args.train_batch_size)).mean()
                 
+                    train_triplet_loss += avg_triplet_loss.item() / args.gradient_accumulation_steps
+                    train_recon_loss += avg_recon_loss.item() / args.gradient_accumulation_steps
+    
                 # Back propagate
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
@@ -1838,15 +1887,19 @@ def main(args):
                         "train_loss": train_loss,
                         "train_pretrain_loss": train_pretrain_loss,
                         "train_reward_loss": train_reward_loss,
-                        "lr": lr_scheduler.get_last_lr()[0]
-                    },
-                    step=global_step
+                        "train_triplet_loss": train_triplet_loss,
+                        "train_recon_loss": train_recon_loss,
+                        "train_triplet_loss": train_triplet_loss if args.task_name == "identity" else 0.0,
+                        "train_recon_loss": train_recon_loss if args.task_name == "identity" else 0.0,
+                        "lr": lr_scheduler.get_last_lr()[0],
+                    }, step=global_step
                 )
                 loss_per_epoch += train_loss
                 pretrain_loss_per_epoch += train_pretrain_loss
                 reward_loss_per_epoch += train_reward_loss
 
                 train_loss, train_pretrain_loss, train_reward_loss = 0., 0., 0.
+                train_triplet_loss, train_recon_loss = 0., 0.
 
                 if accelerator.is_main_process:
                     if global_step % args.checkpointing_steps == 0:
@@ -1886,8 +1939,12 @@ def main(args):
                 "reward_loss_step": reward_loss.detach().item(),
                 "lr": lr_scheduler.get_last_lr()[0]
             }
+            if args.task_name == "identity":
+                logs["triplet_loss_step"] = triplet_loss.detach().item()
+                logs["recon_loss_step"] = recon_loss.detach().item()
+
             progress_bar.set_postfix(**logs)
-            # accelerator.log(logs, step=global_step)
+            accelerator.log(logs, step=global_step)
 
             # FSDP save model need to call all the ranks
             if global_step % args.checkpointing_steps == 0:
@@ -1914,6 +1971,12 @@ def main(args):
             "pretrain_loss_epoch": pretrain_loss_per_epoch / len(train_dataloader),
             "reward_loss_epoch": reward_loss_per_epoch / len(train_dataloader),
         }
+
+        if args.task_name == "identity":
+            logs.update({
+                "triplet_loss_epoch": train_triplet_loss / len(train_dataloader),
+                "recon_loss_epoch": train_recon_loss / len(train_dataloader),
+            })
         progress_bar.set_postfix(**logs)
         accelerator.log(logs, step=global_step)
 

@@ -140,34 +140,89 @@
 # # Run forward
 # out = unet(sample, timestep, encoder_hidden_states=encoder_hidden_states)
 
-from diffusers import UNet2DConditionModel
+# from diffusers import UNet2DConditionModel
+# import torch
+
+# model = UNet2DConditionModel.from_pretrained("CompVis/stable-diffusion-v1-4", subfolder="unet")
+# model.eval()
+
+# x = torch.randn(1, 4, 64, 64)
+# t = torch.tensor([1])
+# context = torch.randn(1, 77, 768)
+
+# skip_shapes = []
+
+# def hook_fn(module, inputs, outputs):
+#     skip_shapes.append(inputs[0].shape)
+
+# hooks = []
+# for block in model.up_blocks:
+#     for resnet in block.resnets:
+#         hooks.append(resnet.register_forward_hook(hook_fn))
+
+# with torch.no_grad():
+#     _ = model(x, t, context)
+
+# for h in hooks:
+#     h.remove()
+
+# print("Final ordered skip connection shapes:")
+# for shape in skip_shapes:
+#     print(f"  {shape}")
+
 import torch
+from diffusers import StableDiffusionPipeline
 
-model = UNet2DConditionModel.from_pretrained("CompVis/stable-diffusion-v1-4", subfolder="unet")
-model.eval()
+# Load Stable Diffusion 1.5 U-Net in half precision
+model_id = "runwayml/stable-diffusion-v1-5"
+pipe = StableDiffusionPipeline.from_pretrained(model_id, torch_dtype=torch.float16)
+pipe.to("cuda")
+unet = pipe.unet
 
-x = torch.randn(1, 4, 64, 64)
-t = torch.tensor([1])
-context = torch.randn(1, 77, 768)
+# Determine the model's dtype
+dtype = next(unet.parameters()).dtype  # This will be torch.float16
 
-skip_shapes = []
+# Prepare dummy inputs in the same dtype as the model
+batch_size = 1
+latent_channels = 4
+height = 64
+width = 64
+text_embed_dim = 768
 
-def hook_fn(module, inputs, outputs):
-    skip_shapes.append(inputs[0].shape)
+sample = torch.randn(batch_size, latent_channels, height, width, dtype=dtype).to("cuda")
+timestep = torch.tensor([1], dtype=torch.long).to("cuda")  # timestep is usually long, dtype does not change
+encoder_hidden_states = torch.randn(batch_size, 77, text_embed_dim, dtype=dtype).to("cuda")
 
-hooks = []
-for block in model.up_blocks:
-    for resnet in block.resnets:
-        hooks.append(resnet.register_forward_hook(hook_fn))
+# Storage for layer information
+layers_info = []
 
+def register_hooks(module, prefix=""):
+    """Recursively register hooks to capture output shapes for all layers."""
+    for name, submodule in module.named_children():
+        full_name = f"{prefix}.{name}" if prefix else name
+
+        # Leaf module = no children
+        if len(list(submodule.children())) == 0:
+            submodule.register_forward_hook(
+                lambda m, inp, out, n=full_name: layers_info.append({
+                    "layer_name": n,
+                    "layer_type": m.__class__.__name__,
+                    "output_shape": list(out.shape) if isinstance(out, torch.Tensor) else str(out),
+                    "num_params": sum(p.numel() for p in m.parameters() if p.requires_grad)
+                })
+            )
+        else:
+            register_hooks(submodule, prefix=full_name)
+
+# Register hooks
+register_hooks(unet)
+
+# Forward pass to trigger hooks
 with torch.no_grad():
-    _ = model(x, t, context)
+    unet(sample, timestep=timestep, encoder_hidden_states=encoder_hidden_states)
 
-for h in hooks:
-    h.remove()
-
-print("Final ordered skip connection shapes:")
-for shape in skip_shapes:
-    print(f"  {shape}")
-
-
+# Print layer details
+print(f"{'Layer Name':60s} {'Layer Type':25s} {'Output Shape':25s} {'# Params':10s}")
+print("="*120)
+for layer in layers_info:
+    print(f"{layer['layer_name']:60s} {layer['layer_type']:25s} {str(layer['output_shape']):25s} {layer['num_params']:10d}")

@@ -702,7 +702,7 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
                 controlnet_block = nn.Conv2d(input_channel, input_channel, kernel_size=1)
                 controlnet_block = zero_module(controlnet_block)
                 self.controlnet_up_blocks.append(controlnet_block)
-                # print(f"Added block (extra): {controlnet_block}")
+            #     print(f"Added block (extra): {controlnet_block}")
         
             # print("\n")
         
